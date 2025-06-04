@@ -11,6 +11,7 @@ import time
 import stim
 from pysat.examples.rc2 import RC2
 from pysat.formula import WCNF
+import numpy as np
 
 def is_CSS(stabs):
     pass
@@ -38,21 +39,21 @@ def make_code(stabilizers) -> tuple[list[stim.PauliString], list[stim.PauliStrin
 
     return stabilizers, observable_xs, observable_zs
 
-def make_circuit(stabilizers: list[stim.PauliString], 
+def make_circuit(stabilizers: list[stim.PauliString],
                  logical_paulis: list[stim.PauliString]) -> stim.Circuit:
     num_qubits = len(stabilizers[0])
     num_stabilizers = len(stabilizers)
     num_logicals = len(logical_paulis)
-    stab_record_step = num_stabilizers + 1
-    logical_record_step = 2*num_stabilizers + num_logicals + 1
+    stab_record_step = num_logicals + num_stabilizers + 1
+    logical_record_step = num_stabilizers + num_logicals + 1
 
     circuit = stim.Circuit()
 
     # Declare that we will be measuring the logical paulis and stabilizers
-    for k, observable in enumerate(logical_paulis):
-        circuit.append("MPP", stim.target_combined_paulis(observable))
     for stabilizer in stabilizers:
         circuit.append('MPP', stim.target_combined_paulis(stabilizer))
+    for k, observable in enumerate(logical_paulis):
+        circuit.append("MPP", stim.target_combined_paulis(observable))
 
     # Execute a depolarizing noise model, which includes all possible Pauli strings
     circuit.append('DEPOLARIZE1', range(num_qubits), 1e-3)

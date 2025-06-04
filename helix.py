@@ -63,9 +63,25 @@ def find_stabilizers(group, z0, x0):
     for i, g in enumerate(it.product(*[range(a) for a in group])):
         g = np.array(g)
         if can_flip and g in flips:
+            print("Your code is CSS")
             stabilizers[i, np.mod(z0 + g, group) @ strides + n] = 1
             stabilizers[i, np.mod(x0 - g, group) @ strides] = 1
         else:
+            print("Your code is NOT CSS")
             stabilizers[i, np.mod(z0 + g, group) @ strides] = 1
             stabilizers[i, np.mod(x0 - g, group) @ strides + n] = 1
     return stabilizers
+
+if __name__ == "__main__":
+    """
+    Run unit tests.
+    """
+
+    # Make some CSS codes and check if they are CSS
+    CSS_group = (4, 7, 3)
+    X0 = ((0, 4, 1), (2, 3, 2))
+    Z0 = ((1, 6, 2), (3, 1, 0), (1, 1, 1))
+    CSS_stabs = find_stabilizers(CSS_group, Z0, X0)
+    print(f"Your CSS stabs are:\n{CSS_stabs}")
+
+    # Make some non-CSS codes and check if they are CSS
