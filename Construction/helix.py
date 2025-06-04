@@ -15,6 +15,43 @@ The tableau is NOT in reduced form---there are dependent stabilizers! (E.g. thin
 import numpy as np
 import itertools as it
 
+def build_set(group, a, b):
+    s = {}
+    for i in a:
+        for j in b:
+            s.add(np.mod(j - i, group))
+    return s
+
+def css_flips(n, group, z0, x0):
+    zz = build_set(z0, z0)
+    xx = build_set(x0, x0)
+    zz.add(xx)
+    zx = build_set(z0, x0)
+    flips = {np.zeros(len(group), np.int64)}
+    for g in zz:
+        gen_g = {g}
+        cur = g
+        while max(cur) > 0:
+            cur = np.mod(cur + g, group)
+            gen_g.add(cur)
+        cur_flips = flips.copy()
+        for i in cur_flips:
+            for j in gen_g:
+                flips.add(np.mod(i + j, group))
+        if len(flips) == n:
+            return False, {}
+    group_times_two = {}
+    for g in it.product(*[range(a) for a in group]):
+        group_times_two.add(np.mod(2 * g, group))
+    bad = {}
+    for i in zx:
+        for j in group_times_two:
+            bad.add(np.mod(i + j, group))
+    if flips.isdisjoint(bad):
+        return True, flips
+    return False, {}
+
+
 def find_stabilizers(group, z0, x0):
     n = int(np.prod(group))
     d = len(group)
@@ -22,8 +59,13 @@ def find_stabilizers(group, z0, x0):
     strides[:-1] = np.cumprod(group[::-1])[d - 2::-1]
     strides[-1] = 1
     stabilizers = np.zeros((n, 2 * n), dtype = np.uint8)
+    can_flip, flips = css_flips(n, group, z0, x0)
     for i, g in enumerate(it.product(*[range(a) for a in group])):
         g = np.array(g)
-        stabilizers[i, np.mod(z0 + g, group) @ strides] = 1
-        stabilizers[i, np.mod(x0 - g, group) @ strides + n] = 1
+        if can_flip and g in flips:
+            stabilizers[i, np.mod(z0 + g, group) @ strides + n] = 1
+            stabilizers[i, np.mod(x0 - g, group) @ strides] = 1
+        else:
+            stabilizers[i, np.mod(z0 + g, group) @ strides] = 1
+            stabilizers[i, np.mod(x0 - g, group) @ strides + n] = 1
     return stabilizers
