@@ -14,3 +14,8 @@ The main tools required are
 * Distance estimation
 * Sparse decoding via BP-OSD
 * Pseudo-threshold analysis
+
+
+## Dependencies
+* `stim`: must be at least version 1.15
+
