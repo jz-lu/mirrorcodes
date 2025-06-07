@@ -20,32 +20,39 @@ def build_set(group, a, b):
     s = []
     for i in a:
         for j in b:
-            s = np.append(s, np.mod(j - i, group))
+            new = np.mod(j - i, group)
+            if len(s) == 0:
+                s = [new]
+                continue
+            s = np.vstack([s, new])
     return np.unique(s, axis = 0)
 
 def css_flips(n, group, z0, x0, strides):
     zz = build_set(group, z0, z0)
     xx = build_set(group, x0, x0)
-    zz = np.concatenate([zz, xx])
+    same_diffs = np.unique(np.vstack([zz, xx]), axis = 0)
     zx = build_set(group, z0, x0)
     flips = [np.zeros(len(group), np.int64)]
-    for g in zz:
+    for g in same_diffs:
         gen_g = [g]
         cur = g
         while np.max(cur) > 0:
             cur = np.mod(cur + g, group)
-            gen_g = np.append(gen_g, cur)
+            gen_g = np.vstack([gen_g, cur])
         cur_flips = flips.copy()
         for i in cur_flips:
             for j in gen_g:
-                flips = np.append(flips, [np.mod(i + j, group)], axis=0)
+                flips = np.vstack([flips, np.mod(i + j, group)])
         flips = np.unique(flips, axis = 0)
         if len(flips) == n:
             return False, set()
     group_times_two = []
     for g in it.product(*[range(a) for a in group]):
-        g = np.array(g)
-        group_times_two = np.append(group_times_two, np.mod(2 * g, group))
+        new = np.mod(2 * np.array(g), group)
+        if len(group_times_two) == 0:
+            group_times_two = [new]
+            continue
+        group_times_two = np.vstack([group_times_two, new])
     group_times_two = np.unique(group_times_two, axis = 0)
     bad = set()
     for i in zx:
@@ -58,8 +65,9 @@ def css_flips(n, group, z0, x0, strides):
 
 
 def find_stabilizers(group, z0, x0):
-    group = np.array(group)
-    z0 = np.array(z0); x0 = np.array(x0)
+    group = np.array(group, np.int64)
+    z0 = np.array(z0, np.int64)
+    x0 = np.array(x0, np.int64)
     n = int(np.prod(group))
     d = len(group)
     strides = np.zeros(d, np.int64)
@@ -69,13 +77,12 @@ def find_stabilizers(group, z0, x0):
     can_flip, flips = css_flips(n, group, z0, x0, strides)
     print(f"Your code is{'' if can_flip else ' NOT'} CSS")
     for i, g in enumerate(it.product(*[range(a) for a in group])):
-        g = np.array(g)
-        if can_flip and g in flips:
-            stabilizers[i, np.mod(z0 + g, group) @ strides + n] = 1
-            stabilizers[i, np.mod(x0 - g, group) @ strides] = 1
-        else:
-            stabilizers[i, np.mod(z0 + g, group) @ strides] = 1
-            stabilizers[i, np.mod(x0 - g, group) @ strides + n] = 1
+        stabilizers[i, np.mod(z0 + g, group) @ strides] = 1
+        stabilizers[i, np.mod(x0 - g, group) @ strides + n] = 1
+    if can_flip:
+        for g in flips:
+            index = g @ strides
+            stabilizers[:, [index, index + n]] = stabilizers[:, [index + n, index]] 
     return stabilizers
 
 if __name__ == "__main__":
