@@ -16,6 +16,72 @@ import numpy as np
 import itertools as it
 from test_cases import symp2Pauli
 
+def canonicalize_with_mult(group, z0, x0, mult):
+    z0 = np.mod(z0 * mult, group)
+    x0 = np.mod(x0 * mult, group)
+    subtract = []
+    for i, k in enumerate(group):
+        if k % 2 == 0:
+            subtract += [2 * (x0[0, i] // 2)]
+        else:
+            subtract += [x0[0, i]]
+    x0 = np.mod(x0 - subtract, group)
+    return np.vstack([z0, x0])
+
+def canonicalize_with_order(group, z0, x0):
+    z0 = np.array(z0)
+    x0 = np.array(x0)
+    x0 = np.mod(x0 - z0[0], group)
+    z0 = np.mod(z0 - z0[0], group)
+    assert max(z0[0]) == 0
+    mults = [0] * len(group)
+    for i, k in enumerate(group):
+        candidates = set()
+        for j in range(k):
+            if np.gcd(j, k) == 1:
+                candidates.add(j)
+        for j in range(1, len(z0)):
+            m = min(np.array(list(candidates)) * z0[j, i] % k)
+            for l in candidates.copy():
+                if z0[j, i] * l % k != m:
+                    candidates.remove(l)
+        mults[i] = list(candidates)
+    sets = []
+    for i in it.product(*mults):
+        new = canonicalize_with_mult(group, z0, x0, i)
+        if len(sets) == 0:
+            sets = np.array([new])
+            continue
+        np.append(sets, np.array([new]), axis = 0)
+    sets = np.array(sets)
+    sets.sort(axis = 0)
+    return sets[0]
+
+def canonicalize_perms(group, z0, x0):
+    results = []
+    for i in it.permutations(z0):
+        for j in it.permutations(x0):
+            new = canonicalize_with_order(group, i, j)
+            if len(results) == 0:
+                results = np.array([new])
+                continue
+            np.append(results, np.array([new]), axis = 0)
+    results = np.array(results)
+    results.sort(axis = 0)
+    return results[0]
+
+def canonicalize(group, z0, x0):
+    if len(z0) < len(x0):
+        return canonicalize(group, x0, z0)
+    if len(z0) == len(x0):
+        options = np.array([canonicalize_perms(group, z0, x0),
+                            canonicalize_perms(group, x0, z0)])
+        options.sort(axis = 0)
+        return options[0, :len(z0)], options[0, len(z0):]
+    result = canonicalize_perms(group, z0, x0)
+    return result[:len(z0)], result[len(z0):]
+
+
 def build_set(group, a, b):
     s = []
     for i in a:
@@ -95,6 +161,7 @@ if __name__ == "__main__":
     n = int(np.prod(CSS_group))
     X0 = ((0, 4, 1), (2, 3, 2))
     Z0 = ((1, 6, 2), (3, 1, 0), (1, 1, 1))
+    print(canonicalize(CSS_group, X0, Z0))
     CSS_stabs = find_stabilizers(CSS_group, Z0, X0)
     print(f"Your CSS stabs are:")
     for stab in CSS_stabs:
