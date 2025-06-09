@@ -48,12 +48,11 @@ def canonicalize_with_order(group, z0, x0):
         mults[i] = list(candidates)
     sets = []
     for i in it.product(*mults):
-        new = canonicalize_with_mult(group, z0, x0, i)
+        new = np.array([canonicalize_with_mult(group, z0, x0, i)])
         if len(sets) == 0:
-            sets = np.array([new])
+            sets = new
             continue
-        np.append(sets, np.array([new]), axis = 0)
-    sets = np.array(sets)
+        sets = np.append(sets, new, axis = 0)
     sets.sort(axis = 0)
     return sets[0]
 
@@ -61,14 +60,12 @@ def canonicalize_perms(group, z0, x0):
     results = []
     for i in it.permutations(z0):
         for j in it.permutations(x0):
-            new = canonicalize_with_order(group, i, j)
+            new = np.array([canonicalize_with_order(group, i, j)])
             if len(results) == 0:
-                results = np.array([new])
+                results = new
                 continue
-            np.append(results, np.array([new]), axis = 0)
-    results = np.array(results)
-    results.sort(axis = 0)
-    return results[0]
+            results = np.append(results, new, axis = 0)
+    return results[np.lexsort(results.reshape(len(results), -1).T[::-1])[0]]
 
 def canonicalize(group, z0, x0):
     if len(z0) < len(x0):
