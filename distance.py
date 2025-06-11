@@ -239,11 +239,11 @@ def distance(stim_stab_tableau, IS_CSS=False, verbose=True):
             if verbose:
                 print(f"Z-distance = {Zdist}")
         t5 = time.monotonic()
+        dist = min(Zdist, Xdist)
         if verbose:
+            print(f"Distance = {dist}")
             print(f"Z-distance calculated in {t5 - t4:0.3f}s")
             print(f"Distance calculated in {t5 - t1:0.3f}s")
-
-        dist = min(Zdist, Xdist)
 
     else:
         obs = [*obs_xs, *obs_zs]
