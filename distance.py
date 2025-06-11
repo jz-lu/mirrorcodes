@@ -1,11 +1,11 @@
 """
 `distance.py`
 Code file to calculate the distance of a LDPC stabilizer code.
+The code need not be CSS. If it is CSS, we use `CSS_make_circuit()`
+to make it go much faster. If it is not CSS, we use `stab_make_circuit()`
+which is significantly slower but works.
 
-This calculation can either be done exactly or approximately (upper bound given).
-The approximate version is faster and is done by random error models.
-
-TODO: make code faster in case the code is CSS
+We define a code to be CSS if every check is either pure X or pure Z.
 """
 import time
 import stim
@@ -73,19 +73,45 @@ def CSS_make_circuit(stabilizers: list[stim.PauliString],
     assert obs_type in ['Z', 'X'], f"obs_type should be 'Z' or 'X', but is {obs_type}"
     num_qubits = len(stabilizers[0])
     circuit = stim.Circuit()
+    stab_record_step = 1
+
+    for stabilizer in stabilizers:
+        if stabilizer.pauli_indices(obs_type):
+            circuit.append("MPP", stim.target_combined_paulis(stabilizer))
+            stab_record_step += 1
+
+    for k, observable in enumerate(logical_paulis):
+        X_part, Z_part = stim.PauliString.to_numpy(observable)
+        stim_obs = []
+        for i, (x, z) in enumerate(zip(X_part, Z_part)):
+            if x and z:
+                stim_obs.append(stim.target_y(i))
+            elif x:
+                stim_obs.append(stim.target_x(i))
+            elif z:
+                stim_obs.append(stim.target_z(i))
+        circuit.append("OBSERVABLE_INCLUDE", stim_obs, k)
 
     ERROR_TYPE = 'X' if obs_type == 'Z' else 'Z'
 
     circuit.append(f"{ERROR_TYPE}_ERROR", range(num_qubits), 1e-3)
 
-    for k, observable in enumerate(logical_paulis):
-        circuit.append("MPP", stim.target_combined_paulis(observable))
-        circuit.append("OBSERVABLE_INCLUDE", stim.target_rec(-1), k)
-
     for stabilizer in stabilizers:
         if stabilizer.pauli_indices(obs_type):
-            circuit.append("MPP", stim.target_combined_paulis(stabilizer))
-            circuit.append("DETECTOR", stim.target_rec(-1))
+            circuit.append('MPP', stim.target_combined_paulis(stabilizer))
+            circuit.append('DETECTOR', [stim.target_rec(-stab_record_step), stim.target_rec(-1)])
+    
+    for k, observable in enumerate(logical_paulis):
+        X_part, Z_part = stim.PauliString.to_numpy(observable)
+        stim_obs = []
+        for i, (x, z) in enumerate(zip(X_part, Z_part)):
+            if x and z:
+                stim_obs.append(stim.target_y(i))
+            elif x:
+                stim_obs.append(stim.target_x(i))
+            elif z:
+                stim_obs.append(stim.target_z(i))
+        circuit.append("OBSERVABLE_INCLUDE", stim_obs, k)
 
     return circuit
 
@@ -175,48 +201,53 @@ def distance(stim_stab_tableau, IS_CSS=False, verbose=True):
     https://quantumcomputing.stackexchange.com/questions/37289/compute-the-exact-minimum-distance-of-a-qecc-with-integer-linear-programming-met
     """
     stabilizers, obs_xs, obs_zs = make_code(stim_stab_tableau)
+    r = len(stabilizers); k = len(obs_xs) # r = num stabs = n - k
+    print(f"Code is [[r, k]] = [[{r}, {k}]]")
     dist = -1
 
     if IS_CSS:
         t0 = time.monotonic()
-        Zcircuit = CSS_make_circuit(stabilizers, obs_zs, obs_type='Z')
         Xcircuit = CSS_make_circuit(stabilizers, obs_xs, obs_type='X')
-        Zwcnf_string = Zcircuit.shortest_error_sat_problem(format='WDIMACS')
         Xwcnf_string = Xcircuit.shortest_error_sat_problem(format='WDIMACS')
+        Xwcnf = WCNF(from_string=Xwcnf_string)
+        Xdist = -1
         t1 = time.monotonic()
         if verbose:
-            print(f"Problem created in {t1 - t0:0.3f}s")
-
-        Zwcnf = WCNF(from_string=Zwcnf_string)
-        Xwcnf = WCNF(from_string=Xwcnf_string)
-        Zdist, Xdist = -1, -1
-
-        with RC2(Zwcnf) as rc2:
-            rc2.compute()
-            Zdist = rc2.cost
-            if verbose:
-                print(f"Z-distance = {Zdist}")
-        t2 = time.monotonic()
-        if verbose:
-            print(f"Z-Problem solved in {t2 - t1:0.3f}s")
+            print(f"X-problem created in {t1 - t0:0.3f}s")
 
         with RC2(Xwcnf) as rc2:
             rc2.compute()
             Xdist = rc2.cost
             if verbose:
                 print(f"X-distance = {Xdist}")
-        t3 = time.monotonic()
+        t2 = time.monotonic()
         if verbose:
-            print(f"X-Problem solved in {t3 - t2:0.3f}s")
-            print(f"Problem solved in {t3 - t1:0.3f}s")
+            print(f"X-distance calculated in {t2 - t1:0.3f}s")
+
+        t3 = time.monotonic()
+        Zcircuit = CSS_make_circuit(stabilizers, obs_zs, obs_type='Z')
+        Zwcnf_string = Zcircuit.shortest_error_sat_problem(format='WDIMACS')
+        Zwcnf = WCNF(from_string=Zwcnf_string)
+        Zdist = -1
+        t4 = time.monotonic()
+        if verbose:
+            print(f"Z-problem created in {t4 - t3:0.3f}s")
+
+        with RC2(Zwcnf) as rc2:
+            rc2.compute()
+            Zdist = rc2.cost
+            if verbose:
+                print(f"Z-distance = {Zdist}")
+        t5 = time.monotonic()
+        if verbose:
+            print(f"Z-distance calculated in {t5 - t4:0.3f}s")
+            print(f"Distance calculated in {t5 - t1:0.3f}s")
 
         dist = min(Zdist, Xdist)
 
     else:
         obs = [*obs_xs, *obs_zs]
         t0 = time.monotonic()
-        r = len(stabilizers); k = len(obs_xs) # r = num stabs = n - k
-        print(f"Code is [[r, k]] = [[{r}, {k}]]")
         assert k == len(obs_zs), f"There should always be the same number of logical X's and Z's"
         Zcircuit = stab_make_circuit(stabilizers, obs)
         Zwcnf_string = Zcircuit.shortest_error_sat_problem(format='WDIMACS')

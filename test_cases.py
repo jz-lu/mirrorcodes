@@ -20,13 +20,22 @@ def find_stabilizers(group, z0, x0):
 
 def get_stabilizers(code):
     """
-    Get the stim stabilizers of a given code
+    Get the stim stabilizers of a given code, and whether or not they are CSS.
+
+    Params:
+        * code (str): description of the code. There are a few options.
+    
+    Returns:
+        * stabs (list[stim.PauliString]): stabilizer tableau in stim form (list of stim.PauliString objects)
+        * IS_CSS (bool): bit indicating if code is CSS.
     """
     stabs = None
+    IS_CSS = False
     if code == "5qubit":
         stabs = stimify_stabs(['XZZXI', 'IXZZX', 'XIXZZ', 'ZXIXZ'])
     elif code == "repetition":
         stabs = stimify_stabs(['ZZI', 'ZIZ'])
+        IS_CSS = True
     elif code == "cookie":
         group = (6, 12)
         z0 = [(0,0), (0,1), (-3,2)]
@@ -35,6 +44,7 @@ def get_stabilizers(code):
 
         stabs = stimify_symplectic(stabs_symp)
     elif code == "BB":
+        IS_CSS = True
         offsets = {1, -1, 1j, -1j, 3 + 6j, -6 + 3j}
         w = 24
         h = 12
@@ -59,13 +69,13 @@ def get_stabilizers(code):
                     stabilizer[index_of(m + offset * sign)] = basis
                 stabs.append(stabilizer)
     else:
-        assert False, f"Unrecognized code name {code}"
-    return stabs
+        raise ValueError(f"Unrecognized code name {code}")
+    return stabs, IS_CSS
 
 def main(args):
     code = args.code
-    stabs = get_stabilizers(code)
-    dist = distance(stabs)
+    stabs, IS_CSS = get_stabilizers(code)
+    dist = distance(stabs, IS_CSS=IS_CSS, verbose=True)
     return dist
 
 if __name__ == "__main__":
