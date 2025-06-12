@@ -68,7 +68,7 @@ def canonicalize_perms(group, z0, x0):
     return results[np.lexsort(results.reshape(len(results), -1).T[::-1])[0]]
 
 def canonicalize(group, z0, x0):
-    if len(z0) < len(x0):
+    if len(z0) > len(x0):
         return canonicalize(group, x0, z0)
     if len(z0) == len(x0):
         options = np.array([canonicalize_perms(group, z0, x0),
