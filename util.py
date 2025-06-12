@@ -1,5 +1,5 @@
 """
-`helpers.py`
+`util.py`
 
 Code file with a bunch of simple helper functions that process and convert between
 stim, Pauli string, and symplectic representations of codes.

@@ -167,9 +167,7 @@ def process_codes(n, Z_wt, X_wt, index_start = 0, index_end = None):
             if not (np.all(Zs == canon_Z) and np.all(Xs == canon_X)):
                 jump = 1
         if jump >= 0:
-            index //= jump
-            index += 1
-            index *= jump
+            index = (index // jump + 1) * jump
             continue
         COUNTER += 1
         index += 1

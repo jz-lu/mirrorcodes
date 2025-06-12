@@ -3,7 +3,7 @@ import argparse
 import numpy as np
 from distance import distance
 import itertools as it
-from helpers import stimify_stabs, stimify_symplectic
+from util import stimify_stabs, stimify_symplectic
 
 def find_stabilizers(group, z0, x0):
     n = int(np.prod(group))
