@@ -3,6 +3,7 @@ import argparse
 import numpy as np
 from distance import distance
 import itertools as it
+from helpers import stimify_stabs, stimify_symplectic
 
 def find_stabilizers(group, z0, x0):
     n = int(np.prod(group))
@@ -17,55 +18,24 @@ def find_stabilizers(group, z0, x0):
         stabilizers[i, np.mod(x0 - g, group) @ strides + n] = 1
     return stabilizers
 
-def symp2Pauli(x, n):
-    """
-    Return a sign-free Pauli string representation of the length 2`n` symplectic vector `x`.
-
-    Input:
-        * n (int): number of qubits.
-        * x (numpy.ndarray): binary vector of length 2n, symplectically representing a n-qubit Pauli string.
-
-    The convention for the symplectic vector is [Z | X] .
-    
-    Returns:
-        * length-n string over {I, X, Y, Z} where the ith character is the Pauli on the ith qubit
-    """
-    vec = []
-    for i in range(n):
-        char = 'I'
-        if x[i] == 0 and x[i+n] == 1:
-            char = 'X'
-        elif x[i] == 1 and x[i+n] == 1:
-            char = 'Y'
-        elif x[i] == 1 and x[i+n] == 0:
-            char = 'Z'
-        vec.append(char)
-    return ''.join(vec)
-
-def stimify_stabs(stabs):
-    """
-    Convert a stabilizer tableau into stim convention.
-    """
-    return [stim.PauliString(x) for x in stabs]
-
-def stimify_symplectic(stabs):
-    """
-    Convert a symplectic tableau into stim convention.
-    """
-    assert len(stabs[0]) % 2 == 0 and len(stabs[0]) > 0
-    n = len(stabs[0]) // 2
-    stabs = [symp2Pauli(vec, n) for vec in stabs]
-    return stimify_stabs(stabs)
-
 def get_stabilizers(code):
     """
-    Get the stim stabilizers of a given code
+    Get the stim stabilizers of a given code, and whether or not they are CSS.
+
+    Params:
+        * code (str): description of the code. There are a few options.
+    
+    Returns:
+        * stabs (list[stim.PauliString]): stabilizer tableau in stim form (list of stim.PauliString objects)
+        * IS_CSS (bool): bit indicating if code is CSS.
     """
     stabs = None
+    IS_CSS = False
     if code == "5qubit":
         stabs = stimify_stabs(['XZZXI', 'IXZZX', 'XIXZZ', 'ZXIXZ'])
     elif code == "repetition":
         stabs = stimify_stabs(['ZZI', 'ZIZ'])
+        IS_CSS = True
     elif code == "cookie":
         group = (6, 12)
         z0 = [(0,0), (0,1), (-3,2)]
@@ -74,6 +44,7 @@ def get_stabilizers(code):
 
         stabs = stimify_symplectic(stabs_symp)
     elif code == "BB":
+        IS_CSS = True
         offsets = {1, -1, 1j, -1j, 3 + 6j, -6 + 3j}
         w = 24
         h = 12
@@ -98,13 +69,13 @@ def get_stabilizers(code):
                     stabilizer[index_of(m + offset * sign)] = basis
                 stabs.append(stabilizer)
     else:
-        assert False, f"Unrecognized code name {code}"
-    return stabs
+        raise ValueError(f"Unrecognized code name {code}")
+    return stabs, IS_CSS
 
 def main(args):
     code = args.code
-    stabs = get_stabilizers(code)
-    dist = distance(stabs)
+    stabs, IS_CSS = get_stabilizers(code)
+    dist = distance(stabs, IS_CSS=IS_CSS, verbose=True)
     return dist
 
 if __name__ == "__main__":
