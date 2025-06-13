@@ -141,6 +141,16 @@ def n_partitions(n):
 index_end is exclusive
 '''
 def process_codes(n, Z_wt, X_wt, index_start = 0, index_end = None):
+    """
+    FILL IN THIS DOCUMENTATION
+
+    Params:
+        * Fill me in
+    
+    Returns:
+        * list of helix codes in (group, Z_0, X_0) form.
+    
+    """
     if index_end == None:
         index_end = num_indices(n, Z_wt, X_wt)
     groups = n_partitions(n)
