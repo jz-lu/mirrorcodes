@@ -30,6 +30,11 @@ from constants import get_filename, \
                       RATE_THRESHOLD, DISTANCE_THRESHOLD, \
                       DISTANCE_RATE_THRESHOLD
 
+from util import stimify_symplectic
+from helix import find_stabilizers
+from search import process_codes
+from distance import distance
+
 def stage1(n : int):
     """
     Stage 1 filtering. 
@@ -40,7 +45,7 @@ def stage1(n : int):
     Returns:
         * list of helix codes in (group, Z_0, X_0) form which pass stage 1.
     """
-    pass
+    return process_codes(n)
 
 
 def stage2(n : int, codes : list):
@@ -54,10 +59,19 @@ def stage2(n : int, codes : list):
     Returns:
         * list of helix codes in (group, Z_0, X_0) form which pass stage 2.
     """
-    pass
+    passing_codes = []
+    for code in codes:
+        tableau = find_stabilizers(code)
+        r = np.linalg.matrix_rank(tableau)
+        k = n - r
+        rate = k/n
+        if rate >= RATE_THRESHOLD:
+            passing_codes.append(code)
+            print(f"Added [[{n}, {k}]] code of rate {rate} :{code}")
+    return passing_codes
 
 
-def stage3(n : int, codess : list):
+def stage3(n : int, codes : list):
     """
     Stage 3 filtering. 
 
@@ -71,7 +85,7 @@ def stage3(n : int, codess : list):
     pass
 
 
-def stage4(n : int, codess : list):
+def stage4(n : int, codes : list):
     # TODO
     raise Exception("Stage 4 has not been implemented yet.")
 
