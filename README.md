@@ -18,4 +18,4 @@ The main tools required are
 
 ## Dependencies
 * `stim`: must be at least version 1.15
-
+* `pysat`: install with `examples` via `pip install git+https://github.com/pysathq/pysat.git`

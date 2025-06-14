@@ -52,35 +52,6 @@ def is_canonical(helix_code):
     """
     return helix_code == canonicalize(*helix_code)
 
-def passes_stage_1(helix_code):
-    """
-    Evaluate whether a given code passes through stage 1 of tests.
-
-    Input:
-        * `helix_code` (tuple): Tuple of (group, Z0, X0) where group is a tuple and Z0 and X0 are sets
-    
-    Returns:
-        * Binary indication of whether `helix_code` passes stage 1 of tests.
-    """
-    pass
-
-def group_level_search(group, Z_wt, X_wt):
-    """
-    Search helix codes formed from `group` with Z-weight `Z_wt` and X-weight `X_wt`.
-    Save the ones which pass stage 1.
-
-    Input:
-        * group (tuple): tuple of integers specifying the group
-        * Z_wt (int): weight of the Z's in each check
-        * X_wt (int): weight of the X's in each check
-    
-    Output:
-        * A .npy file for each code which passes the stage 1 test
-    
-    Returns:
-        * None
-    """
-    pass
 
 def n_level_search(n, Z_wt, X_wt):
     """
