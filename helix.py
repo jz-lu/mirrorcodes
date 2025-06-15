@@ -11,10 +11,10 @@ The return is a stabilizer tableau of size n x 2n, where n = a1 * ... * aN, whic
 The check weight is exactly |Z0| + |X0| - |Z0 ^ X0| <= |Z0| + |X0|, so keep these small if you want LDPC.
 The tableau is NOT in reduced form---there are dependent stabilizers! (E.g. think of the last 2 stabilizers in the toric code.)
 """
-
-import numpy as np
 import itertools as it
-from util import symp2Pauli
+import numpy as np
+
+from util import find_strides
 
 def canonicalize_with_mult(group, z0, x0, mult):
     """
@@ -149,6 +149,73 @@ def canonicalize(group, z0, x0):
     options = options[np.lexsort(options.reshape(2, -1).T[::-1])[0]]
     #options contains all of z0 and x0 in one list, so we split it up
     return options[:len(z0)], options[len(z0):]
+
+def is_Z_canonical(group, z0, isos):
+    """
+    Canonicalization checker for just Z's. Does not check legality. Merely checks
+    whether it can find a smaller equivalent z0 instance.
+
+    Params:
+        * group (np.ndarray): 1D Array of all the group sizes in the factored
+          version of the group. Also accepts tuple.
+        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed
+          along the group dimensions. Number of columns should match length of
+          group and not exceed the terms of group. Number of rows is the Z weight.
+          Also accepts tuples at any level.
+        * isos (list of lists): list of all isomorphisms of each factor of group
+
+    Returns:
+        * Boolean with whether z0 is canonical.
+    """
+    group = np.array(group)
+    z0 = np.array(z0)
+    
+    #sorted index calculation
+    strides = find_strides(group)
+    combiner = find_strides([np.prod(group)] * len(z0))
+    z0_index = combiner @ z0 @ strides
+    
+    #check over all permutations and isomorphisms
+    for i in it.permutations(z0):
+        shifted = np.mod(i - i[0], group)
+        for j in it.product(*isos):
+            if combiner @ np.mod(shifted * j, group) @ strides < z0_index:
+                return False
+    return True
+
+def is_X_canonical(group, x0, isos):
+    """
+    Canonicalization checker for just X's. Does not check legality. Merely checks
+    whether it can find a smaller equivalent x0 instance.
+
+    Params:
+        * group (np.ndarray): 1D Array of all the group sizes in the factored
+          version of the group. Also accepts tuple.
+        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed
+          along the group dimensions. Number of columns should match length of
+          group and not exceed the terms of group. Number of rows is the X weight.
+          Also accepts tuples at any level.
+        * isos (list of lists): list of all isomorphisms we wish to consider
+
+    Returns:
+        * Boolean with whether z0 is canonical.
+    """
+    group = np.array(group)
+    x0 = np.array(x0)
+    
+    #sorted index calculation
+    strides = find_strides(group)
+    combiner = find_strides([np.prod(group)] * len(x0))
+    x0_index = combiner @ x0 @ strides
+    
+    #check over all permutations and isomorphisms
+    for i in it.permutations(x0):
+        shifted = np.mod(i - np.array([j if k % 2 == 1 else 2 * (j // 2)
+                                       for j, k in zip(i[0], group)]), group)
+        for j in it.product(*isos):
+            if combiner @ np.mod(shifted * j, group) @ strides < x0_index:
+                return False
+    return True
 
 def build_set(group, a, b):
     """

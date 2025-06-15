@@ -4,8 +4,10 @@
 Code file with a bunch of simple helper functions that process and convert between
 stim, Pauli string, and symplectic representations of codes.
 """
-import stim
+import itertools as it
+from math import gcd
 import numpy as np
+import stim
 
 def symp2Pauli(x, n):
     """
@@ -65,6 +67,114 @@ def is_CSS(stabs, n):
     is_unmixed = lambda x: np.all(x[:n] == 0) or np.all(x[n:] == 0)
     return np.all([is_unmixed(vec) for vec in stabs])
 
+def find_strides(group):
+    """Finds index incrementing values for a given group.
 
+    Params:
+        * group (np.ndarray): A list containing the group.
 
+    Returns:
+        * Array with index incrementing values, the backwards cumulative product.
+    """
+    if len(group) == 1:
+        return [1]
+    return np.append(np.cumprod(group[::-1])[len(group) - 2::-1], 1)
 
+def partitions(n, I=1):
+    """
+    Finds all partitions of n. I a lower bound on elements of the partitions,
+    which is 1 by default. This function should be moved to util.py
+    
+    Input:
+        * n (int): the number whose partitions we want to compute.
+        * I (int, optional): the minimum entry in the partitions, 1 by default
+    
+    Returns:
+        * Iterable of tuples containing the partitions of n with minimum I or more
+    """
+    yield (n,)
+    for i in range(I, n // 2 + 1):
+        for p in partitions(n - i, i):
+            yield (i,) + p
+
+def index_to_tuple(group, index):
+    """
+    Compute a tuple representing a qubit in group, given an index from 0 to n - 1,
+    the size of the group. This is no different than expressing a number "base
+    group". Notably, this works for larger indices too, but will only consider the
+    index mod n.
+
+    Params:
+        * group (np.ndarray): the group we are decomposing the index into
+        * index (int): A number from 0 to n - 1 corresponding to a tuple mod group.
+    
+    Returns:
+        * A tuple with the same length as group, corresponding to the indexth
+        tuple mod group.
+    """
+    result = []
+    for g in group[::-1]:
+        result.append(index % g)
+        index //= g
+    return (*result[::-1],)
+
+def find_isos(group):
+    """
+    Find all values relatively prime to group, with threading over a list.
+    
+    Params:
+        * group (int or np.ndarray): group size or list of group sizes
+
+    Returns:
+        * List (of lists) of values relatively prime to each group size
+    """
+    if isinstance(group, int):
+        return [i for i in range(1, group) if gcd(i, group) == 1]
+    return [[i for i in range(1, g) if gcd(i, g) == 1] for g in group]
+
+def binary_rank(A):
+    """
+    Finds the rank mod 2 of a matrix A.
+
+    Params:
+        * A (np.ndarray): the matrix whose rank we want to find
+
+    Returns:
+        * int containing the rank of A
+    """
+    M = np.array(A, dtype=np.uint8) & 1
+    m, n = M.shape
+    r = 0
+    for c in range(n):
+        #swap rows out of order
+        for i in range(r, m):
+            if M[i, c]:
+                M[[r, i]] = M[[i, r]]
+                break
+        else:
+            continue
+        #cancel other entries in pivot columns
+        for j in range(r + 1, m):
+            if M[j, c]:
+                M[j] ^= M[r]
+        r += 1
+    return r
+
+def compute_rank_from_tuples(group, qubits):
+    """
+    Finds an upper bound for the rank of the stabilizer matrix by just using one
+    side of the parity checks.
+
+    Params:
+        * group (np.ndarray): the group we are counting our qubits in
+        * qubits (np.ndarray): the qubits making up Z0 or X0, mod group
+
+    Returns:
+        * int which is the rank of the binary matrix with shifts of qubits
+    """
+    n = np.prod(group)
+    matrix = np.zeros((n, n), dtype = np.uint8)
+    strides = find_strides(group)
+    for i, j in enumerate(it.product(*[range(i) for i in group])):
+        matrix[i, np.mod(qubits + j, group) @ strides] = 1
+    return binary_rank(matrix)

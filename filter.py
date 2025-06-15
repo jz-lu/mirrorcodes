@@ -30,7 +30,7 @@ from constants import get_filename, \
                       RATE_THRESHOLD, DISTANCE_THRESHOLD, \
                       DISTANCE_RATE_THRESHOLD
 
-from util import stimify_symplectic
+from util import stimify_symplectic, binary_rank
 from helix import find_stabilizers
 from search import process_codes
 from distance import distance
@@ -45,7 +45,7 @@ def stage1(n : int):
     Returns:
         * list of helix codes in (group, Z_0, X_0) form which pass stage 1.
     """
-    return process_codes(n)
+    return find_all_codes(n)
 
 
 def stage2(n : int, codes : list):
@@ -62,7 +62,7 @@ def stage2(n : int, codes : list):
     passing_codes = []
     for code in codes:
         tableau = find_stabilizers(code)
-        r = np.linalg.matrix_rank(tableau)
+        r = binary_rank(tableau)
         k = n - r
         rate = k/n
         if rate >= RATE_THRESHOLD:
