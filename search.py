@@ -28,7 +28,7 @@ import numpy as np
 from primefac import primefac
 
 from distance import distance
-from helix import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical
+from helix import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical, HelixCode
 from util import binary_rank, compute_rank_from_tuples, find_isos, find_strides, \
                  index_to_tuple, partitions
 
@@ -445,11 +445,10 @@ def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True, return_k = Tr
         * X_wt (int): The number of terms in X0
         * group (np.ndarray): The group whose codes we are finding
         * rate_filter (bool, optional): Whether codes should be filtered by rate
-        * return_k (bool, optional): Whether the codes should return their
-          logical dimension
+        * return_k (bool, optional): Whether to return k or not
     
     Returns:
-        * List of tuples of the form (group, Z0, X0) for valid codes. Each of Z0 and
+        * List of tuples of the form (group, Z0, X0, IS_CSS, k) for valid codes. Each of Z0 and
           X0 is a list/tuple of lists/tuples mod group. If return_k is true, also
           adds the k, the logical dimension of the code, to the tuple.
     """
@@ -459,17 +458,15 @@ def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True, return_k = Tr
     codes = []
     for i in zs:
         for j in xs[i[1]]:
-            rank = 0
-            if rate_filter or return_k:
-                rank = binary_rank(find_stabilizers(group, i[0], j))
-            if rank == n:
+            code = HelixCode(group, i[0], j, n=n)
+            if rate_filter and code.get_k() == 0:
                 continue
             canon_Z, canon_X = canonicalize(group, i[0], j)
             if np.all(i[0] == canon_Z) and np.all(j == canon_X):
-                codes.append((group, i[0], j) + ((n - rank,) if return_k else ()))
+                codes.append((group, i[0], j, code.is_CSS()) + ((code.get_k(),) if return_k else ()))
     return codes
 
-def find_all_codes(n, Z_wt, X_wt, rate_filter = True, return_k = True):
+def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
     """
     Finds all codes for a given number of qubits, n, of given weight.
 
@@ -478,8 +475,6 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True, return_k = True):
         * Z_wt (int): The number of terms in Z0
         * X_wt (int): The number of terms in X0
         * rate_filter (bool, optional): Whether codes should be filtered by rate
-        * return_k (bool, optional): Whether the codes should return their
-          logical dimension
     
     Returns:
         * List of tuples of the form (group, Z0, X0) for valid codes. Each of Z0
@@ -498,7 +493,7 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True, return_k = True):
     
     result = []
     for group in n_partitions(n):
-        result += find_all_codes_in_group(Z_wt, X_wt, group, rate_filter, return_k)
+        result += find_all_codes_in_group(Z_wt, X_wt, group, rate_filter, return_k=rate_filter)
     return result
 
 def main():

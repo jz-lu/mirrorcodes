@@ -7,7 +7,7 @@ The filtering process will be dependent on a fixed n and is a 3-step procedure.
 
 Stage 1) Find all inequivalent codes for a given n. (Equivalence is defined by a series of automorphisms).
          This is the "canonical set". This is extremely fast for each code, but there are a huge number of 
-         codes to check.
+         codes to check. Check the rate (n - rank of matrix) and discard if it zero.
 Stage 2) Find all codes which passed stage 1 and whose rate is above a threshold. This is quite fast.
 Stage 3) Find all codes which passed stage 2 and whose distance is good. Here, good depends on whether
          we can calculate the distance in a reasonable time. If we can, then the distance * rate
@@ -30,12 +30,19 @@ from constants import get_filename, \
                       RATE_THRESHOLD, DISTANCE_THRESHOLD, \
                       DISTANCE_RATE_THRESHOLD
 
-from util import stimify_symplectic, binary_rank
-from helix import find_stabilizers
-from search import process_codes
+from util import stimify_symplectic
+from helix import HelixCode
+from search import find_all_codes
 from distance import distance
+import signal
 
-def stage1(n : int, Z_wt : int, X_wt : int, rate_filter = True : bool):
+class TimeoutException(Exception):
+    pass
+
+def _timeout_handler(signum, frame):
+    raise TimeoutException()
+
+def stage1(n:int, Z_wt:int, X_wt:int, rate_filter:bool=True):
     """
     Stage 1 filtering. 
 
@@ -43,50 +50,67 @@ def stage1(n : int, Z_wt : int, X_wt : int, rate_filter = True : bool):
         * n (int): number of qubits.
         * Z_wt (int): number of elements of Z_0.
         * X_wt (int): number of elements of X_0.
-        * rate_filter (bool, optional): Whether to do stage 2 to speed up stage 1
+        * rate_filter (bool, optional): Whether to do stage 2 to speed up stage 1.
 
     Returns:
-        * list of helix codes in (group, Z_0, X_0) form which pass stage 1.
+        * list of helix codes in (group, Z_0, X_0, IS_CSS, k) form which pass stage 1,
     """
     return find_all_codes(n, Z_wt, X_wt, rate_filter)
 
 
-def stage2(n : int, codes : list):
+def stage2(n:int, codes:list):
     """
     Stage 2 filtering. 
 
     Params:
         * n (int): number of qubits.
-        * codes (list): list of helix codes in (group, Z_0, X_0) form which passed stage 1.
+        * codes (list): list of helix codes in ((group, Z_0, X_0), k) form which passed stage 1.
 
     Returns:
-        * list of helix codes in (group, Z_0, X_0) form which pass stage 2.
+        * list of helix codes in ((group, Z_0, X_0), k) form which pass stage 2.
     """
     passing_codes = []
-    for code in codes:
-        tableau = find_stabilizers(code)
-        r = binary_rank(tableau)
-        k = n - r
+    for code_data in codes:
+        group, z0, x0, _, k = code_data
         rate = k/n
         if rate >= RATE_THRESHOLD:
-            passing_codes.append(code)
-            print(f"Added [[{n}, {k}]] code of rate {rate} :{code}")
+            passing_codes.append(code_data)
+            print(f"Added [[{n}, {k}]] code of rate {rate} :{(group, z0, x0)}")
     return passing_codes
 
 
-def stage3(n : int, codes : list):
+def stage3(n : int, codes : list, t=3):
     """
     Stage 3 filtering. 
 
     Params:
         * n (int): number of qubits.
-        * codes (list): list of helix codes in (group, Z_0, X_0) form which passed stage 2.
+        * codes (list): list of helix codes in ((group, Z_0, X_0), k) form which passed stage 2.
+        * t (int): how many seconds you are willing to spend on the distance calculation.
 
     Returns:
-        * list of helix codes in (group, Z_0, X_0) form which pass stage 3.
+        * list of helix codes in (group, Z_0, X_0, k, d, k*d/n) form which pass stage 3.
+          (d -> -1, k*d/n -> -1 if distance failed to calculate in time t)
     """
-    pass
-
+    passing_codes = []
+    for code_data in codes:
+        group, z0, x0, is_css, k = code_data
+        code = HelixCode(group, z0, x0, n=n, k=k, is_css=is_css)
+        d = -1
+        old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+        signal.alarm(t)
+        try:
+            d = code.get_d()
+        except TimeoutException:
+            return -1
+        finally:
+            # Clean up: cancel pending alarms & restore the old handler
+            signal.alarm(0)
+            signal.signal(signal.SIGALRM, old_handler)
+        if d == -1 or d >= DISTANCE_THRESHOLD:
+            passing_codes.append((group, z0, x0, is_css, k, d, -1 if d == -1 else round(k*d/n, 5)))
+        
+    return passing_codes
 
 def stage4(n : int, codes : list):
     # TODO
@@ -106,15 +130,16 @@ def main(args):
         out_data = stage1(n)
     else:
         in_file = f"{in_directory}/{get_filename(stage, n)}"
-        codes = None
+        in_data = None
         with open(in_file, "rb") as f:
-            codes = pickle.load(f)
+            in_data = pickle.load(f)
+
         if stage == 2:
-            out_data = stage2(n, codes)
+            out_data = stage2(n, in_data)
         elif stage == 3:
-            out_data = stage3(n, codes)
+            out_data = stage3(n, in_data)
         elif stage == 4:
-            out_data = stage4(n, codes)
+            out_data = stage4(n, in_data)
     
     out_file = f"{out_directory}/{get_filename(stage, n)}"
     with open(out_file, "wb") as f:
