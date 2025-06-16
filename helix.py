@@ -13,8 +13,9 @@ The tableau is NOT in reduced form---there are dependent stabilizers! (E.g. thin
 """
 import itertools as it
 import numpy as np
-
 from util import find_isos, find_strides, shift_X
+from util import binary_rank, symp2Pauli, stimify_symplectic
+from distance import distance
 
 def canonicalize_perms(group, z0, x0, isos, strides):
     """
@@ -81,6 +82,7 @@ def canonicalize_perms(group, z0, x0, isos, strides):
                 min_x = new_x_isoed
     return min_z, min_x
 
+
 def canonicalize(group, z0, x0):
     """
     Main canonicalizer. This accepts the sets z0 and x0 and returns the canonical
@@ -139,6 +141,7 @@ def canonicalize(group, z0, x0):
         return z1, x1
     return z2, x2
 
+
 def is_Z_canonical(group, z0, isos):
     """
     Canonicalization checker for just Z's. Does not check legality. Merely checks
@@ -171,6 +174,7 @@ def is_Z_canonical(group, z0, isos):
             if combiner @ np.mod(shifted * j, group) @ strides < z0_index:
                 return False
     return True
+
 
 def is_X_canonical(group, x0, isos):
     """
@@ -206,6 +210,7 @@ def is_X_canonical(group, x0, isos):
                 return False
     return True
 
+
 def build_set(group, a, b):
     """
     Utility function. Given two sets of arrays, finds all possible differences
@@ -235,6 +240,7 @@ def build_set(group, a, b):
 
     #throw away duplicates
     return np.unique(s, axis = 0)
+
 
 def css_flips(group, z0, x0):
     """
@@ -326,6 +332,7 @@ def find_stabilizers(group, z0, x0):
         * 2D numpy array in symplectic form (Z|X) with the stabilizers of the code.
           Returns n stabilizers, so contains linearly dependent checks. Should
           automatically be in CSS form if code is CSS.
+        * boolean on whether or not the code is CSS
     """
     #convert to numpy arrays
     group = np.array(group, np.int64)
@@ -357,7 +364,60 @@ def find_stabilizers(group, z0, x0):
         for g in flips:
             index = g @ strides
             stabilizers[:, [index, index + n]] = stabilizers[:, [index + n, index]] 
-    return stabilizers
+    return stabilizers, can_flip
+
+
+class HelixCode():
+    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None):
+        self.group = group
+        self.z0 = z0
+        self.x0 = x0
+        self.stabilizers = None
+        self.stim_tableau = None
+        self.CSS = is_css
+
+        self.n = n
+        self.k = k
+        self.d = d
+
+    def get_stabilizers(self):
+        if self.stabilizers is None:
+            self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+        return self.stabilizers
+    
+    def get_stim_tableau(self):
+        if self.stim_tableau is None:
+            self.stim_tableau = stimify_symplectic(self.get_stabilizers())
+        return self.stim_tableau
+
+    def get_n(self):
+        if self.n is None:
+            self.n = np.prod(self.group)
+        return self.n
+    
+    def get_k(self):
+        if self.k is None:
+            self.k = self.get_n() - binary_rank(self.get_stabilizers())
+        return self.k
+    
+    def get_d(self, verbose=False):
+        if self.d is None:
+            tableau = self.get_stim_tableau()
+            assert self.CSS is not None, f"You screwed up somewhere?"
+            self.d = distance(tableau, self.CSS, verbose=verbose)
+        return self.d
+    
+    def is_CSS(self):
+        if self.CSS is None:
+            self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+        return self.CSS
+
+    def get_rate(self):
+        return self.get_k() / self.get_n()
+    
+    def get_rel_dist(self):
+        return self.get_d() / self.get_n()
+
 
 if __name__ == "__main__":
     """

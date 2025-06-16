@@ -37,7 +37,7 @@ def symp2Pauli(x, n):
 
 def stimify_stabs(stabs):
     """
-    Convert a stabilizer tableau into stim convention.
+    Convert a stabilizer tableau in Pauli string notation into stim convention.
     """
     return [stim.PauliString(x) for x in stabs]
 

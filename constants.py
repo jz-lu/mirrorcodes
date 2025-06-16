@@ -16,4 +16,4 @@ def get_filename(stage, n):
 RATE_THRESHOLD = 1/16
 DISTANCE_THRESHOLD = 4
 
-DISTANCE_RATE_THRESHOLD = 1/2 # const c such that we want R*d > c*n
+DISTANCE_RATE_THRESHOLD = 0.4 # const c such that we want R*d > c*n
