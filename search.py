@@ -486,11 +486,13 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True, return_k = True):
           and X0 is a list/tuple of lists/tuples mod group. If return_k is true, the
           tuple also has k at the end, the logical dimension of the code.
     """
-    #test if n is a power of 2 or less than 2
-    if n < 2 or rate_filter:
+    if n < 2:
+        return []
+    #test if n is a power of 2 and if a weight is 3
+    if rate_filter and (Z_wt == 3 or X_wt == 3):
         p = n
         while True:
-            if p < 2:
+            if p == 1:
                 return []
             if p % 2 == 1:
                 break
