@@ -27,7 +27,6 @@ from math import gcd
 import numpy as np
 from primefac import primefac
 
-from constants import RATE_THRESHOLD
 from distance import distance
 from helix import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical
 from util import binary_rank, compute_rank_from_tuples, find_isos, find_strides, \
@@ -368,7 +367,7 @@ def build_Z0_candidates(Z_wt, group, rate_filter = True):
         if (jump > 0 or np.any(z_indices[:-1] >= z_indices[1:])
             or not is_Z_canonical(group, zs, isos)
             or (rate_filter and (not np.any(zs[:, odd_indices])
-                or n - compute_rank_from_tuples(group, zs) < n * RATE_THRESHOLD))):
+                or compute_rank_from_tuples(group, zs) == n))):
             jump = max(jump, 1)
             index_val = (index_val // jump + 1) * jump
             continue
@@ -428,7 +427,7 @@ def build_X0_candidates(X_wt, group, rate_filter = True):
             if (jump > 0 or np.any(x_indices[:-1] >= x_indices[1:])
                 or not is_X_canonical(group, xs, isos)
                 or (rate_filter and (not np.any(xs[:, odd_indices]) or
-                    n - compute_rank_from_tuples(group, xs) < n * RATE_THRESHOLD))):
+                                     compute_rank_from_tuples(group, xs) == n))):
                 jump = max(jump, 1)
                 index_val = (index_val // jump + 1) * jump
                 continue
@@ -437,7 +436,7 @@ def build_X0_candidates(X_wt, group, rate_filter = True):
             index_val += 1
     return result
 
-def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True):
+def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True, return_k = True):
     """
     Finds all codes of weights Z_wt and X_wt for a given group.
 
@@ -446,6 +445,8 @@ def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True):
         * X_wt (int): The number of terms in X0
         * group (np.ndarray): The group whose codes we are finding
         * rate_filter (bool, optional): Whether codes should be filtered by rate
+        * return_k (bool, optional): Whether the codes should return their
+          logical dimension
     
     Returns:
         * List of tuples of the form (Z0, X0) for valid codes. Each of Z0 and X0
@@ -457,15 +458,20 @@ def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True):
     codes = []
     for i in zs:
         for j in xs[i[1]]:
-            if rate_filter and n - binary_rank(find_stabilizers(
-                group, i[0], j)) < n * RATE_THRESHOLD:
+            rank = 0
+            if rate_filter or return_k:
+                rank = binary_rank(find_stabilizers(group, i[0], j))
+            if rank == n:
                 continue
             canon_Z, canon_X = canonicalize(group, i[0], j)
             if np.all(i[0] == canon_Z) and np.all(j == canon_X):
-                codes.append((i[0], j))
+                if return_k:
+                    codes.append((group, i[0], j, n - rank))
+                else:
+                    codes.append((group, i[0], j))
     return codes
 
-def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
+def find_all_codes(n, Z_wt, X_wt, rate_filter = True, return_k = True):
     """
     Finds all codes for a given number of qubits, n, of given weight.
 
@@ -474,6 +480,8 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
         * Z_wt (int): The number of terms in Z0
         * X_wt (int): The number of terms in X0
         * rate_filter (bool, optional): Whether codes should be filtered by rate
+        * return_k (bool, optional): Whether the codes should return their
+          logical dimension
     
     Returns:
         * List of tuples of the form (group, Z0, X0) for valid codes. Each of Z0
@@ -491,7 +499,7 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
     
     result = []
     for group in n_partitions(n):
-        result += find_all_codes_in_group(Z_wt, X_wt, group)
+        result += find_all_codes_in_group(Z_wt, X_wt, group, rate_filter, return_k)
     return result
 
 def main():
