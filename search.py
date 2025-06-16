@@ -29,8 +29,8 @@ from primefac import primefac
 
 from constants import RATE_THRESHOLD
 from distance import distance
-from helix import canonicalize, is_X_canonical, is_Z_canonical
-from util import compute_rank_from_tuples, find_isos, find_strides, \
+from helix import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical
+from util import binary_rank, compute_rank_from_tuples, find_isos, find_strides, \
                  index_to_tuple, partitions
 
 def is_canonical(helix_code):
@@ -449,15 +449,18 @@ def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True):
         * List of tuples of the form (Z0, X0) for valid codes. Each of Z0 and X0
         is a list/tuple of lists/tuples mod group.
     """
+    n = np.prod(group)
     zs = build_Z0_candidates(Z_wt, group)
     xs = build_X0_candidates(X_wt, group)
-    total_codes = sum([len(xs[i[1]]) for i in zs])
-    codes = [0] * total_codes
-    position = 0
+    codes = []
     for i in zs:
         for j in xs[i[1]]:
-            codes[position] = (i[0], j)
-            position += 1
+            if rate_filter and n - binary_rank(find_stabilizers(
+                group, i[0], j)) < n * RATE_THRESHOLD:
+                continue
+            canon_Z, canon_X = canonicalize(group, i[0], j)
+            if np.all(i[0] == canon_Z) and np.all(j == canon_X):
+                codes.append((i[0], j))
     return codes
 
 def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
@@ -482,8 +485,8 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
     return result
 
 def main():
-    for i in range(16):
-        print(i, process_codes(i, 3, 3))
+    for i in range(32):
+        print(i, len(find_all_codes(i, 3, 3)))
 
 if __name__ == "__main__":
     main()

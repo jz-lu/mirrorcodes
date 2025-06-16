@@ -134,7 +134,8 @@ def find_isos(group):
 
 def binary_rank(A):
     """
-    Finds the rank mod 2 of a matrix A.
+    Finds the rank mod 2 of a matrix A without explicit row swapping,
+    using XOR to absorb the pivot row.
 
     Params:
         * A (np.ndarray): the matrix whose rank we want to find
@@ -146,18 +147,18 @@ def binary_rank(A):
     m, n = M.shape
     r = 0
     for c in range(n):
-        #swap rows out of order
         for i in range(r, m):
             if M[i, c]:
-                M[[r, i]] = M[[i, r]]
+                if i != r:
+                    M[r] ^= M[i]
                 break
         else:
             continue
-        #cancel other entries in pivot columns
-        for j in range(r + 1, m):
-            if M[j, c]:
-                M[j] ^= M[r]
+        rows_to_eliminate = np.where(M[r+1:, c])[0] + (r + 1)
+        M[rows_to_eliminate] ^= M[r]
         r += 1
+        if r == m:
+            break
     return r
 
 def compute_rank_from_tuples(group, qubits):
@@ -178,3 +179,18 @@ def compute_rank_from_tuples(group, qubits):
     for i, j in enumerate(it.product(*[range(i) for i in group])):
         matrix[i, np.mod(qubits + j, group) @ strides] = 1
     return binary_rank(matrix)
+
+def shift_X(group, x0):
+    """
+    Method for shifting x0 to make the first element have 0's or 1's.
+
+    Params:
+        * group (np.ndarray): the group we are counting our qubits in
+        * x0 (np.ndarray): the qubits making up X0, mod group
+
+    Returns:
+        * shifted version of x0
+    """
+    shift_bump = np.array([1 if g % 2 == 0 and i % 2 == 1 else 0
+                           for i, g in zip(x0[0], group)])
+    return np.mod(x0 - x0[0] + shift_bump, group)

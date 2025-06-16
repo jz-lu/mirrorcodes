@@ -14,141 +14,130 @@ The tableau is NOT in reduced form---there are dependent stabilizers! (E.g. thin
 import itertools as it
 import numpy as np
 
-from util import find_strides
+from util import find_isos, find_strides, shift_X
 
-def canonicalize_with_mult(group, z0, x0, mult):
+def canonicalize_perms(group, z0, x0, isos, strides):
     """
-    Quaternary canonicalizer. This accepts the sets z0 and x0 and returns a guess for the canonical z0 and x0. Applies the passed isomorhism and computes the X-shift by shifting the second argument by 2 * g.
+    Secondary canonicalizer. This accepts the sets z0 and x0 and returns a guess
+    for the canonical z0 and x0. Applies all tricks other than swapping z0 and x0.
+    Various equivalences that this tries are reordering Z0 and X0, applying an
+    automorphism to any component group, and shifting the X0's by 2g, for some g.
 
     Params:
-        * group (np.ndarray): 1D Array of all the group sizes in the factored version of the group. Also accepts tuple.
-        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the Z weight. Also accepts tuples at any level.
-        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the X weight. Also accepts tuples at any level.
-        * mult (np.ndarray): 1D Array of the same shape as group, containing entries all relatively prime to the corresponding group size. These represent the automorhism we need to apply before finding the X-shift.
+        * group (np.ndarray): 1D Array of all the group sizes in the factored
+          version of the group. Also accepts tuple.
+        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed
+          along the group dimensions. Number of columns should match length of group
+          and not exceed the terms of group. Number of rows is the Z weight. Also
+          accepts tuples at any level.
+        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed
+          along the group dimensions. Number of columns should match length of group
+          and not exceed the terms of group. Number of rows is the X weight. Also
+          accepts tuples at any level.
+        * isos (np.ndarray): list of lists containing isomorphisms of group
+        * strides (np.ndarray): strides for indexing qubits
 
     Returns:
-        * 2d array containing the z0 and x0 guesses in one stack
+        * Tuple containinng two elements. The first is the canonical version of z0,
+          the second is the canonical version of x0.
     """
-    #apply automorphism
-    z0 = np.mod(z0 * mult, group)
-    x0 = np.mod(x0 * mult, group)
-    subtract = []
-    #for each group, the amount you subtract is either all of the corresponding term in x0[0], or it is almost all if the group size is even and x0[0, i] is odd
-    #this gets called a lot, and builds an array of a known size element by element, so a lot can probably be saved here
-    for i, k in enumerate(group):
-        if k % 2 == 0:
-            subtract += [2 * (x0[0, i] // 2)]
-        else:
-            subtract += [x0[0, i]]
-    x0 = np.mod(x0 - subtract, group)
-    return np.vstack([z0, x0])
+    n = np.prod(group)
 
-def canonicalize_with_order(group, z0, x0):
-    """
-    Tertiary canonicalizer. This accepts the sets z0 and x0 and returns a guess for the canonical z0 and x0, without changing the order of the terms. Applies only isomorphisms and X-shifts.
-
-    Params:
-        * group (np.ndarray): 1D Array of all the group sizes in the factored version of the group. Also accepts tuple.
-        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the Z weight. Also accepts tuples at any level.
-        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the X weight. Also accepts tuples at any level.
-
-    Returns:
-        * 2d array containing the z0 and x0 guesses in one stack
-    """
-    #start by shifting z0[0] to be 0
+    #initialize variables to do indexing and hold current min
     z0 = np.array(z0)
     x0 = np.array(x0)
-    x0 = np.mod(x0 - z0[0], group)
-    z0 = np.mod(z0 - z0[0], group)
-    assert max(z0[0]) == 0
+    min_z, min_x = z0, x0
+    z_combiner = find_strides([n] * len(z0))
+    x_combiner = find_strides([n] * len(x0))
+    min_z_index = z_combiner @ z0 @ strides
+    min_x_index = x_combiner @ x0 @ strides
+    max_x_index = n ** len(x0)
 
-    #find automorphisms
-    mults = [0] * len(group)
-    #for each group dimension...
-    for i, k in enumerate(group):
-        candidates = set()
-        #find all automorphisms of that group... (numbers relatively prime to group size)
-        for j in range(k):
-            if np.gcd(j, k) == 1:
-                candidates.add(j)
-        #and then for each term in z0...
-        for j in range(1, len(z0)):
-            m = min(np.array(list(candidates)) * z0[j, i] % k)
-            #only keep the automorphisms that minimize the corresponding component of that term in z0 (out of the remaining candidates)
-            #this implementation is probably really slow
-            for l in candidates.copy():
-                if z0[j, i] * l % k != m:
-                    candidates.remove(l)
-        mults[i] = list(candidates)
-
-    #for each combination of automorphisms, find the canonical form by just shifting
-    sets = []
-    for i in it.product(*mults):
-        new = [canonicalize_with_mult(group, z0, x0, i)]
-        if len(sets) == 0:
-            sets = np.array(new)
-            continue
-        sets = np.vstack([sets, new])
-    #use numpy black magic to sort nd array and take the first element
-    return sets[np.lexsort(sets.reshape(len(sets), -1).T[::-1])[0]]
-
-def canonicalize_perms(group, z0, x0):
-    """
-    Secondary canonicalizer. This accepts the sets z0 and x0 and returns a guess for the canonical z0 and x0. Applies all tricks other than swapping z0 and x0. Various equivalences that this tries are reordering Z0 and X0, applying an automorphism to any component group, and shifting the X0's by 2g, for some g.
-
-    Params:
-        * group (np.ndarray): 1D Array of all the group sizes in the factored version of the group. Also accepts tuple.
-        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the Z weight. Also accepts tuples at any level.
-        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the X weight. Also accepts tuples at any level.
-
-    Returns:
-        * 2d array containing the z0 and x0 guesses in one stack
-    """
-    #first, find all canonical forms (isomorphisms and shifts only) over all possible permutations of z0 and x0
-    results = []
+    #check all permutations for z
     for i in it.permutations(z0):
-        for j in it.permutations(x0):
-            new = [canonicalize_with_order(group, i, j)]
-            if len(results) == 0:
-                results = new
+        #shift first term to 0
+        new_z_shuffled = np.mod(i - i[0], group)
+        #check all isomorphisms
+        for j in it.product(*isos):
+            new_z_isoed = np.mod(new_z_shuffled * j, group)
+            new_z_index = z_combiner @ new_z_isoed @ strides
+            #new z is larger, skip
+            if new_z_index > min_z_index:
                 continue
-            results = np.vstack([results, new])
-    #use numpy black magic to sort nd array and take the first element
-    return results[np.lexsort(results.reshape(len(results), -1).T[::-1])[0]]
+            #new z is smaller, set z min and set x index to be above max value
+            if new_z_index < min_z_index:
+                min_z = new_z_isoed
+                min_z_index = new_z_index
+                min_x_index = max_x_index
+            #check all x permutations
+            for k in it.permutations(np.mod(x0 - i[0], group)):
+                #apply isomorphism and shift
+                new_x_isoed = shift_X(group, np.mod(np.array(k) * j, group))
+                new_x_index = x_combiner @ new_x_isoed @ strides
+                if new_x_index > min_x_index:
+                    continue
+                #found a new minimum, write it down
+                min_x_index = new_x_index
+                min_x = new_x_isoed
+    return min_z, min_x
 
 def canonicalize(group, z0, x0):
     """
-    Main canonicalizer. This accepts the sets z0 and x0 and returns the canonical isomorphic z0 and x0. The canonical form over equivalent codes is not unique. Here are some guarantees about this function. z0[0] will only contain 0s. The arrays z0[0], z0[1], z0[2], ... will be sorted. The same is true for the arrays in x0. z0[1] will only contain entries x such that x is a divisor of the group size (0 counts). x0[1] will only contain 0 or 1 entries, with 1 entries only being acceptable if the corresponding group size is even. Various equivalences that this tries are swapping Z0 and X0, reordering Z0 and X0, applying an automorphism to any component group, and shifting the X0's by 2g, for some g.
+    Main canonicalizer. This accepts the sets z0 and x0 and returns the canonical
+    isomorphic z0 and x0. The canonical form over equivalent codes is not unique.
+    Here are some guarantees about this function. z0[0] will only contain 0s. The
+    arrays z0[0], z0[1], z0[2], ... will be sorted. The same is true for the arrays
+    in x0. z0[1] will only contain entries x such that x is a divisor of the group
+    size (0 counts). x0[1] will only contain 0 or 1 entries, with 1 entries only
+    being acceptable if the corresponding group size is even. Various equivalences
+    that this tries are swapping Z0 and X0, reordering Z0 and X0, applying an
+    automorphism to any component group, and shifting the X0's by 2g, for some g.
 
     Params:
-        * group (np.ndarray): 1D Array of all the group sizes in the factored version of the group. Also accepts tuple.
-        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the Z weight. Also accepts tuples at any level.
-        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the X weight. Also accepts tuples at any level.
+        * group (np.ndarray): 1D Array of all the group sizes in the factored
+          version of the group. Also accepts tuple.
+        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed
+          along the group dimensions. Number of columns should match length of group
+          and not exceed the terms of group. Number of rows is the Z weight. Also
+          accepts tuples at any level.
+        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed
+          along the group dimensions. Number of columns should match length of group
+          and not exceed the terms of group. Number of rows is the X weight. Also
+          accepts tuples at any level.
 
     Returns:
-        * Tuple containinng two elements. The first is the canonical version of z0, the second is the canonical version of x0.
+        * Tuple containinng two elements. The first is the canonical version of z0,
+          the second is the canonical version of x0.
     """
-    group = np.array(group)
-    z0 = np.array(z0)
-    x0 = np.array(x0)
-
     #make sure that z0 is the shorter one
     if len(z0) > len(x0):
         return canonicalize(group, x0, z0)
 
+    n = np.prod(group)
+    group = np.array(group)
+    z0 = np.array(z0)
+    x0 = np.array(x0)
+    isos = find_isos(group)
+    strides = find_strides(group)
+    
     #case where z0 has fewer terms than x0
     if len(z0) < len(x0):
-        result = canonicalize_perms(group, z0, x0)
-        return result[:len(z0)], result[len(z0):]
+        return canonicalize_perms(group, z0, x0, isos, strides)
 
     #common case, where lengths are equal
-    #finds two options for the canonical form, one where z0 and x0 are switched, each iterating over automorphisms and permutations inside each of z0 and x0
-    options = np.array([canonicalize_perms(group, z0, x0),
-                        canonicalize_perms(group, x0, z0)])
-    #numpy black magic to sort nd array and take the first element
-    options = options[np.lexsort(options.reshape(2, -1).T[::-1])[0]]
-    #options contains all of z0 and x0 in one list, so we split it up
-    return options[:len(z0)], options[len(z0):]
+    #finds two options for the canonical form, one where z0 and x0 are switched,
+    #each iterating over automorphisms and permutations inside each of z0 and x0
+    z1, x1 = canonicalize_perms(group, z0, x0, isos, strides)
+    z2, x2 = canonicalize_perms(group, x0, z0, isos, strides)
+    z_combiner = find_strides([n] * len(z0))
+    x_combiner = find_strides([n] * len(x0))
+    z1_index = z_combiner @ z1 @ strides
+    z2_index = z_combiner @ z2 @ strides
+    x1_index = x_combiner @ x1 @ strides
+    x2_index = x_combiner @ x2 @ strides
+    if z1_index < z2_index or (z1_index == z2_index and x1_index < x2_index):
+        return z1, x1
+    return z2, x2
 
 def is_Z_canonical(group, z0, isos):
     """
@@ -219,15 +208,22 @@ def is_X_canonical(group, x0, isos):
 
 def build_set(group, a, b):
     """
-    Utility function. Given two sets of arrays, finds all possible differences between an element of one array and an element of the other.
+    Utility function. Given two sets of arrays, finds all possible differences
+    between an element of one array and an element of the other.
 
     Params:
-        * group (np.ndarray): 1D Array of all the group sizes in the factored version of the group. Also accepts tuple.
-        * a (np.ndarray): 2D Array. The first array of the two whose differences we will be finding. It is a list of all the elements of the group in the first array. Number of columns should match length of group.
-        * b (np.ndarray): 2D Array. The second array of the two whose differences we will be finding. It is a list of all the elements of the group in the first array. Number of columns should match length of group.
+        * group (np.ndarray): 1D Array of all the group sizes in the factored
+          version of the group. Also accepts tuple.
+        * a (np.ndarray): 2D Array. The first array of the two whose differences
+          we will be finding. It is a list of all the elements of the group in the
+          first array. Number of columns should match length of group.
+        * b (np.ndarray): 2D Array. The second array of the two whose differences
+          we will be finding. It is a list of all the elements of the group in the
+          first array. Number of columns should match length of group.
     
     Returns:
-        * 2D numpy array containing all the elements of the group that are the difference between something in a and something in b.
+        * 2D numpy array containing all the elements of the group that are the
+          difference between something in a and something in b.
     """
     s = []
     group = np.array(group)
@@ -235,89 +231,101 @@ def build_set(group, a, b):
     b = np.array(b)
     for i in a:
         for j in b:
-            new = np.mod(j - i, group)
-            if len(s) == 0:
-                s = [new]
-                continue
-            s = np.vstack([s, new])
+            s.append(np.mod(j - i, group))
 
     #throw away duplicates
     return np.unique(s, axis = 0)
 
-def css_flips(n, group, z0, x0, strides):
+def css_flips(group, z0, x0):
     """
-    Compute the stabilizer tableau of a code. Tableau is returned in symplectic form with the convention [Z | X]. Automatically checks if the code is CSS and converts the tableau to CSS form if so.
+    Compute the stabilizer tableau of a code. Tableau is returned in symplectic
+    form with the convention [Z | X]. Automatically checks if the code is CSS and
+    converts the tableau to CSS form if so.
 
     Params:
-        * n (int): Number of qubits. Should be the product of group. Passed for simplicity
-        * group (np.ndarray): 1D Array of all the group sizes in the factored version of the group. Also accepts tuple.
-        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the Z weight. Also accepts tuples at any level.
-        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the X weight. Also accepts tuples at any level.
-        * strides (np.ndarray): 1D Array of strides of the group. It is the backwards cumulative product of the group sizes. This means that the ith entry tells us by how much we need to increment the index of a group element to increase the ith entry of the group element by 1. Example: if the group is [4, 7, 3], strides should be [21, 3, 1]. This could be computed from group, but is passed for simplicity.
+        * group (np.ndarray): 1D Array of all the group sizes in the factored
+          version of the group. Also accepts tuple.
+        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed
+          along the group dimensions. Number of columns should match length of
+          group and not exceed the terms of group. Number of rows is the Z weight.
+          Also accepts tuples at any level.
+        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed
+          along the group dimensions. Number of columns should match length of
+          group and not exceed the terms of group. Number of rows is the X weight.
+          Also accepts tuples at any level.
 
     Returns:
-        * Tuple containing two terms. The first is a bool which is True iff the code passed was CSS. The second is a numpy array of qubits (in tuple / array form) which need to be hadamarded in order to make the code CSS. The second argument is [] if the first is False.
+        * Tuple containing two terms. The first is a bool which is True iff the
+          code passed was CSS. The second is a numpy array of qubits (in tuple /
+          array form) which need to be hadamarded in order to make the code CSS.
+          The second argument is [] if the first is False.
     """
-    #build sets containing differences between two qubits with the same pauli on them, then combine the sets
-    zz = build_set(group, z0, z0)
-    xx = build_set(group, x0, x0)
-    same_diffs = np.unique(np.vstack([zz, xx]), axis = 0)
+    n = np.prod(group)
+    #build sets containing differences between two qubits with the same pauli on
+    #them, then combine the sets
+    same_diffs = np.unique(np.vstack([build_set(group, z0, z0),
+                                      build_set(group, x0, x0)]), axis = 0)
 
     #build set of differences of qubits with different paulis on them
     zx = build_set(group, z0, x0)
 
     #for each difference between two elements of the same set...
-    flips = [np.zeros(len(group), np.int64)]
+    flips = np.zeros((1, len(group)), dtype = int)
     for g in same_diffs:
         #find the group generated by it...
         gen_g = [g]
         cur = g
         while np.max(cur) > 0:
             cur = np.mod(cur + g, group)
-            gen_g = np.vstack([gen_g, cur])
+            gen_g.append(cur)
         cur_flips = flips.copy()
-        #and use those groups to generate the full group of things connected by steps between qubits that must be in the same block (of the hadamarded and non-hadamarded blocks)
+        #and use those groups to generate the full group of things connected by
+        #steps between qubits that must be in the same block (of the hadamarded
+        #and non-hadamarded blocks)
         for i in cur_flips:
-            for j in gen_g:
-                flips = np.vstack([flips, np.mod(i + j, group)])
+            flips = np.append(flips, np.mod(i + gen_g, group), axis = 0)
         flips = np.unique(flips, axis = 0)
         #if all the qubits lie in the same block, the code cannot be CSS
         if len(flips) == n:
             return False, []
 
-    #the full sets of differences between qubits in the different blocks is given by the differences between Z0 and X0 PLUS any element of the group times 2, since this generates differences between elements of Z0 + g and X0 - g
+    #the full sets of differences between qubits in the different blocks is given
+    #by the differences between Z0 and X0 PLUS any element of the group times 2,
+    #since this generates differences between elements of Z0 + g and X0 - g
     #find full set of 2 * g for all g in the group
-    group_times_two = []
-    for g in it.product(*[range(a) for a in group]):
-        new = np.mod(2 * np.array(g), group)
-        if len(group_times_two) == 0:
-            group_times_two = [new]
-            continue
-        group_times_two = np.vstack([group_times_two, new])
-    group_times_two = np.unique(group_times_two, axis = 0)
-
     #find full set of differences between hadamarded and non hadamarded differences.
     bad = set()
-    for i in zx:
-        for j in group_times_two:
-            bad.add(np.mod(i + j, group) @ strides)
-    for i in flips:
-        if i @ strides in bad:
+    strides = find_strides(group)
+    for i in it.product(*[range(0, a, 2 - a % 2) for a in group]):
+        bad.update(np.mod(i + zx, group) @ strides)
+    for i in flips @ strides:
+        if i in bad:
             return False, []
     return True, flips
 
 
 def find_stabilizers(group, z0, x0):
     """
-    Compute the stabilizer tableau of a code. Tableau is returned in symplectic form with the convention [Z | X]. Automatically checks if the code is CSS and converts the tableau to CSS form if so.
+    Compute the stabilizer tableau of a code. Tableau is returned in symplectic
+    form with the convention [Z | X]. Automatically checks if the code is CSS and
+    converts the tableau to CSS form if so.
 
     Params:
-        * group (np.ndarray): 1D Array of all the group sizes in the factored version of the group. Also accepts tuple.
-        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the Z weight. Also accepts tuples at any level.
-        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed along the group dimensions. Number of columns should match length of group and not exceed the terms of group. Number of rows is the X weight. Also accepts tuples at any level.
+        * group (np.ndarray): 1D Array of all the group sizes in the factored
+          version of the group. Also accepts tuple.
+        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed
+          along the group dimensions. Number of columns should match length of
+          group and not exceed the terms of group. Number of rows is the Z weight.
+          Also accepts tuples at any level.
+        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed
+          along the group dimensions. Number of columns should match length of
+          group and not exceed the terms of group. Number of rows is the X weight.
+          Also accepts tuples at any level.
     
     Returns:
-        * 2D numpy array in symplectic form (Z|X) with the stabilizers of the code. Returns n stabilizers, so contains linearly dependent checks. Should automatically be in CSS form if code is CSS.
+        * 2D numpy array in symplectic form (Z|X) with the stabilizers of the code.
+          Returns n stabilizers, so contains linearly dependent checks. Should
+          automatically be in CSS form if code is CSS.
     """
     #convert to numpy arrays
     group = np.array(group, np.int64)
@@ -328,14 +336,16 @@ def find_stabilizers(group, z0, x0):
     n = int(np.prod(group))
     d = len(group)
 
-    #compute strides, the number by which the index must go up to increment a particular index. Example: if the group is [4, 7, 3], strides is [21, 3, 1], because incrementing the index by 21 increments the first component of the qubit array exactly.
-    strides = np.zeros(d, np.int64)
-    strides[:-1] = np.cumprod(group[::-1])[d - 2::-1]
-    strides[-1] = 1
+    #compute strides, the number by which the index must go up to increment a
+    #particular index. Example: if the group is [4, 7, 3], strides is [21, 3, 1],
+    #because incrementing the index by 21 increments the first component of the
+    #qubit array exactly.
+    strides = find_strides(group)
     stabilizers = np.zeros((n, 2 * n), dtype = np.uint8)
 
-    #if can_flip is true, the code is CSS and flips contains the qubits that need to be hadamarded (the format of these is not indices, but arrays
-    can_flip, flips = css_flips(n, group, z0, x0, strides)
+    #if can_flip is true, the code is CSS and flips contains the qubits that need
+    #to be hadamarded (the format of these is not indices, but arrays
+    can_flip, flips = css_flips(group, z0, x0)
 
     #iterate over all qubits / all tuples in the group / all stabilizers
     for i, g in enumerate(it.product(*[range(a) for a in group])):
