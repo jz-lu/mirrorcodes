@@ -122,8 +122,8 @@ def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
             seen.add((k, d))
             passing_codes.append((group, z0, x0, is_css, k, d, -1 if d == -1 else round(k*d/n, 5)))
         # else:
-            # if verbose:
-            #     print(f"[[{n}, {k}, {d}]]{goodness} code is BAD")
+        #     if verbose:
+        #         print(f"[[{n}, {k}, {d}]]{goodness} code is BAD")
         
     return passing_codes
 
@@ -162,17 +162,17 @@ def main(args):
 
     else:
         if stage == 1:
-            out_data = stage1(n)
+            out_data = stage1(n, 3, 3, rate_filter=True)
         else:
-            in_file = f"{in_directory}/{get_filename(stage, n)}"
+            in_file = f"{in_directory}/{get_filename(stage-1, n)}"
             in_data = None
             with open(in_file, "rb") as f:
                 in_data = pickle.load(f)
 
             if stage == 2:
-                out_data = stage2(n, in_data)
+                out_data = stage2(n, in_data, verbose=VERBOSE)
             elif stage == 3:
-                out_data = stage3(n, in_data)
+                out_data = stage3(n, in_data, verbose=VERBOSE)
             elif stage == 4:
                 out_data = stage4(n, in_data)
         
