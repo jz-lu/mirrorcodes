@@ -449,8 +449,9 @@ def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True, return_k = Tr
           logical dimension
     
     Returns:
-        * List of tuples of the form (Z0, X0) for valid codes. Each of Z0 and X0
-        is a list/tuple of lists/tuples mod group.
+        * List of tuples of the form (group, Z0, X0) for valid codes. Each of Z0 and
+          X0 is a list/tuple of lists/tuples mod group. If return_k is true, also
+          adds the k, the logical dimension of the code, to the tuple.
     """
     n = np.prod(group)
     zs = build_Z0_candidates(Z_wt, group)
@@ -465,10 +466,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True, return_k = Tr
                 continue
             canon_Z, canon_X = canonicalize(group, i[0], j)
             if np.all(i[0] == canon_Z) and np.all(j == canon_X):
-                if return_k:
-                    codes.append((group, i[0], j, n - rank))
-                else:
-                    codes.append((group, i[0], j))
+                codes.append((group, i[0], j) + ((n - rank,) if return_k else ()))
     return codes
 
 def find_all_codes(n, Z_wt, X_wt, rate_filter = True, return_k = True):
@@ -485,7 +483,8 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True, return_k = True):
     
     Returns:
         * List of tuples of the form (group, Z0, X0) for valid codes. Each of Z0
-        and X0 is a list/tuple of lists/tuples mod group.
+          and X0 is a list/tuple of lists/tuples mod group. If return_k is true, the
+          tuple also has k at the end, the logical dimension of the code.
     """
     #test if n is a power of 2 or less than 2
     if n < 2 or rate_filter:
