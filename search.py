@@ -350,6 +350,7 @@ def build_Z0_candidates(Z_wt, group, rate_filter = True):
     index_val = 0
     result = []
     isos = find_isos(group)
+    odd_indices = [i for i in range(d) if group[i] % 2 == 1]
     #for each valid combination from each subgroup
     while index_val < max_index:
         jump = -1
@@ -366,8 +367,8 @@ def build_Z0_candidates(Z_wt, group, rate_filter = True):
         #and increment there if it is not canonical
         if (jump > 0 or np.any(z_indices[:-1] >= z_indices[1:])
             or not is_Z_canonical(group, zs, isos)
-            or (rate_filter and
-                n - compute_rank_from_tuples(group, zs) < n * RATE_THRESHOLD)):
+            or (rate_filter and (not np.any(zs[:, odd_indices])
+                or n - compute_rank_from_tuples(group, zs) < n * RATE_THRESHOLD))):
             jump = max(jump, 1)
             index_val = (index_val // jump + 1) * jump
             continue
@@ -409,6 +410,7 @@ def build_X0_candidates(X_wt, group, rate_filter = True):
         isos = [[k for k in range(1, g) if (k - 1) %
                  (1 if gcds[j] == 0 else g / gcds[j]) == 0 and gcd(k, g) == 1]
                 for j, g in enumerate(group)]
+        odd_indices = [i for i in range(d) if group[i] % 2 == 1]
         index_val = 0
         #for each valid combination from each subgroup
         while index_val < max_index:
@@ -425,8 +427,8 @@ def build_X0_candidates(X_wt, group, rate_filter = True):
             #and increment there if it is not increasing
             if (jump > 0 or np.any(x_indices[:-1] >= x_indices[1:])
                 or not is_X_canonical(group, xs, isos)
-                or (rate_filter and
-                    n - compute_rank_from_tuples(group, xs) < n * RATE_THRESHOLD)):
+                or (rate_filter and (not np.any(xs[:, odd_indices]) or
+                    n - compute_rank_from_tuples(group, xs) < n * RATE_THRESHOLD))):
                 jump = max(jump, 1)
                 index_val = (index_val // jump + 1) * jump
                 continue
@@ -477,8 +479,16 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
         * List of tuples of the form (group, Z0, X0) for valid codes. Each of Z0
         and X0 is a list/tuple of lists/tuples mod group.
     """
-    if n < 2:
-        return []
+    #test if n is a power of 2 or less than 2
+    if n < 2 or rate_filter:
+        p = n
+        while True:
+            if p < 2:
+                return []
+            if p % 2 == 1:
+                break
+            p //= 2
+    
     result = []
     for group in n_partitions(n):
         result += find_all_codes_in_group(Z_wt, X_wt, group)

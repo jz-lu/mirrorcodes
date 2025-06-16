@@ -35,17 +35,20 @@ from helix import find_stabilizers
 from search import process_codes
 from distance import distance
 
-def stage1(n : int):
+def stage1(n : int, Z_wt : int, X_wt : int, rate_filter = True : bool):
     """
     Stage 1 filtering. 
 
     Params:
         * n (int): number of qubits.
+        * Z_wt (int): number of elements of Z_0.
+        * X_wt (int): number of elements of X_0.
+        * rate_filter (bool, optional): Whether to do stage 2 to speed up stage 1
 
     Returns:
         * list of helix codes in (group, Z_0, X_0) form which pass stage 1.
     """
-    return find_all_codes(n)
+    return find_all_codes(n, Z_wt, X_wt, rate_filter)
 
 
 def stage2(n : int, codes : list):
