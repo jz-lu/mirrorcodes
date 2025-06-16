@@ -58,7 +58,7 @@ def stage1(n:int, Z_wt:int, X_wt:int, rate_filter:bool=True):
     return find_all_codes(n, Z_wt, X_wt, rate_filter)
 
 
-def stage2(n:int, codes:list):
+def stage2(n:int, codes:list, verbose:bool=False):
     """
     Stage 2 filtering. 
 
@@ -75,7 +75,8 @@ def stage2(n:int, codes:list):
         rate = k/n
         if rate >= RATE_THRESHOLD:
             passing_codes.append(code_data)
-            print(f"Added [[{n}, {k}]] code of rate {round(rate, 4)}")
+            if verbose:
+                print(f"Added [[{n}, {k}]] code of rate {round(rate, 4)}")
     return passing_codes
 
 
@@ -110,12 +111,13 @@ def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
             # Clean up: cancel pending alarms & restore the old handler
             signal.alarm(0)
             signal.signal(signal.SIGALRM, old_handler)
-        goodness = f" (GR = {round(k*d/n, 4)})" if d > 0 else ""
-        if d == -1 or d >= DISTANCE_THRESHOLD:
+        goodness = k*d/n
+        goodness_str = f" (GR = {round(goodness, 4)})" if d > 0 else ""
+        if d == -1 or (d >= DISTANCE_THRESHOLD and goodness >= DISTANCE_RATE_THRESHOLD):
             if verbose and (k, d) not in seen:
                 # Only print codes with genuinely new parameters.
-                print(f"[[{n}, {k}, {d}]]{goodness} code is GOOD")
-                if k*d/n >= 0.9:
+                print(f"[[{n}, {k}, {d}]]{goodness_str} code found")
+                if goodness >= 0.9:
                     print(f"*******  Someone has a bright future! *******")
             seen.add((k, d))
             passing_codes.append((group, z0, x0, is_css, k, d, -1 if d == -1 else round(k*d/n, 5)))
