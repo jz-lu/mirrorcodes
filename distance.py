@@ -202,7 +202,8 @@ def distance(stim_stab_tableau, IS_CSS=False, verbose=True):
     """
     stabilizers, obs_xs, obs_zs = make_code(stim_stab_tableau)
     r = len(stabilizers); k = len(obs_xs) # r = num stabs = n - k
-    print(f"Code is [[r, k]] = [[{r}, {k}]]")
+    if verbose:
+        print(f"Code is [[r, k]] = [[{r}, {k}]]")
     dist = -1
 
     if IS_CSS:

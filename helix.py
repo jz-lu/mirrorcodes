@@ -405,6 +405,7 @@ class HelixCode():
             tableau = self.get_stim_tableau()
             assert self.CSS is not None, f"You screwed up somewhere?"
             self.d = distance(tableau, self.CSS, verbose=verbose)
+        return self.d
     
     def is_CSS(self):
         if self.CSS is None:

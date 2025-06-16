@@ -75,11 +75,11 @@ def stage2(n:int, codes:list):
         rate = k/n
         if rate >= RATE_THRESHOLD:
             passing_codes.append(code_data)
-            print(f"Added [[{n}, {k}]] code of rate {rate} :{(group, z0, x0)}")
+            print(f"Added [[{n}, {k}]] code of rate {round(rate, 4)}")
     return passing_codes
 
 
-def stage3(n : int, codes : list, t=3):
+def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
     """
     Stage 3 filtering. 
 
@@ -93,6 +93,7 @@ def stage3(n : int, codes : list, t=3):
           (d -> -1, k*d/n -> -1 if distance failed to calculate in time t)
     """
     passing_codes = []
+    seen = set()
     for code_data in codes:
         group, z0, x0, is_css, k = code_data
         code = HelixCode(group, z0, x0, n=n, k=k, is_css=is_css)
@@ -102,48 +103,81 @@ def stage3(n : int, codes : list, t=3):
         try:
             d = code.get_d()
         except TimeoutException:
-            return -1
+            d = -1
+            if verbose:
+                print(f"Distance calculation timed out at {t}s for code {code}, z0 = {z0}, x0 = {x0}")
         finally:
             # Clean up: cancel pending alarms & restore the old handler
             signal.alarm(0)
             signal.signal(signal.SIGALRM, old_handler)
+        goodness = f" (GR = {round(k*d/n, 4)})" if d > 0 else ""
         if d == -1 or d >= DISTANCE_THRESHOLD:
+            if verbose and (k, d) not in seen:
+                # Only print codes with genuinely new parameters.
+                print(f"[[{n}, {k}, {d}]]{goodness} code is GOOD")
+                if k*d/n >= 0.9:
+                    print(f"*******  Someone has a bright future! *******")
+            seen.add((k, d))
             passing_codes.append((group, z0, x0, is_css, k, d, -1 if d == -1 else round(k*d/n, 5)))
+        # else:
+            # if verbose:
+            #     print(f"[[{n}, {k}, {d}]]{goodness} code is BAD")
         
     return passing_codes
 
-def stage4(n : int, codes : list):
+def stage4(n:int, codes:list):
     # TODO
     raise Exception("Stage 4 has not been implemented yet.")
 
 
 def main(args):
+    VERBOSE = args.verbose
+    SAVE_DATA = not args.nosave
     in_directory = args.input
     out_directory = args.output
     if out_directory is None:
         out_directory = in_directory
     stage = args.stage
     n = args.size
+    print(f"Running: n = {n}")
     out_data = None
 
-    if stage == 1:
-        out_data = stage1(n)
-    else:
-        in_file = f"{in_directory}/{get_filename(stage, n)}"
-        in_data = None
-        with open(in_file, "rb") as f:
-            in_data = pickle.load(f)
+    if args.fullsend:
+        print("[Fullsend] Starting stage 1")
+        out_data = stage1(n, Z_wt=3, X_wt=3, rate_filter=True)
+        print(f"Filtered to {len(out_data)} codes")
+        print("[Fullsend] Starting stage 2")
+        out_data = stage2(n, out_data)
+        print(f"Filtered to {len(out_data)} codes")
+        print("[Fullsend] Starting stage 3")
+        out_data = stage3(n, out_data, t=3, verbose=VERBOSE)
+        print(f"Filtered to {len(out_data)} codes")
 
-        if stage == 2:
-            out_data = stage2(n, in_data)
-        elif stage == 3:
-            out_data = stage3(n, in_data)
-        elif stage == 4:
-            out_data = stage4(n, in_data)
-    
-    out_file = f"{out_directory}/{get_filename(stage, n)}"
-    with open(out_file, "wb") as f:
-        pickle.dump(out_data, f)
+        if SAVE_DATA:
+            out_file = f"{out_directory}/{get_filename(3, n)}"
+            with open(out_file, "wb") as f:
+                pickle.dump(out_data, f)
+
+    else:
+        if stage == 1:
+            out_data = stage1(n)
+        else:
+            in_file = f"{in_directory}/{get_filename(stage, n)}"
+            in_data = None
+            with open(in_file, "rb") as f:
+                in_data = pickle.load(f)
+
+            if stage == 2:
+                out_data = stage2(n, in_data)
+            elif stage == 3:
+                out_data = stage3(n, in_data)
+            elif stage == 4:
+                out_data = stage4(n, in_data)
+        
+        if SAVE_DATA:
+            out_file = f"{out_directory}/{get_filename(stage, n)}"
+            with open(out_file, "wb") as f:
+                pickle.dump(out_data, f)
     
     return
 
@@ -163,8 +197,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--stage", "-s",
         type=int,
-        required=True,
+        default=1,
         choices=[1, 2, 3, 4]
+    )
+
+    parser.add_argument(
+        "--fullsend", "-f",
+        action="store_true",
+        help="Run stages 1-3 all at once (don't do this for large n)"
     )
 
     parser.add_argument(
@@ -178,6 +218,18 @@ if __name__ == "__main__":
         "--output", "-o",
         type=str,
         help="Where to write output files (default the same as input directory)"
+    )
+
+    parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Include print statements"
+    )
+
+    parser.add_argument(
+        "--nosave",
+        action="store_true",
+        help="Don't save files"
     )
 
     args = parser.parse_args()
