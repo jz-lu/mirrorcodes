@@ -108,7 +108,7 @@ def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
         except FunctionTimedOut:
             d = -1
             if verbose:
-                print(f"Distance calculation timed out at {t}s for code {code}, z0 = {z0}, x0 = {x0}")
+                print(f"Distance calculation timed out at {t}s for code group = {group}, z0 = {z0}, x0 = {x0}")
         #old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
         #signal.alarm(t)
         #try:
@@ -157,6 +157,9 @@ def main(args):
     X_wt = args.Xweight
     if X_wt is None:
         X_wt = 3
+    time = args.time
+    if time is None:
+        time = 3
     stage = args.stage
     n = args.size
     print(f"Running: n = {n}")
@@ -170,7 +173,7 @@ def main(args):
         out_data = stage2(n, out_data)
         print(f"Filtered to {len(out_data)} codes")
         print("[Fullsend] Starting stage 3")
-        out_data = stage3(n, out_data, t = 3, verbose = VERBOSE)
+        out_data = stage3(n, out_data, t = time, verbose = VERBOSE)
         print(f"Filtered to {len(out_data)} codes")
 
         if SAVE_DATA:
@@ -180,7 +183,7 @@ def main(args):
 
     else:
         if stage == 1:
-            out_data = stage1(n, 3, 3, rate_filter=True)
+            out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, rate_filter = True)
         else:
             in_file = f"{in_directory}/{get_filename(stage - 1, n)}"
             in_data = None
@@ -190,7 +193,7 @@ def main(args):
             if stage == 2:
                 out_data = stage2(n, in_data, verbose=VERBOSE)
             elif stage == 3:
-                out_data = stage3(n, in_data, verbose=VERBOSE)
+                out_data = stage3(n, in_data, t = time, verbose=VERBOSE)
             elif stage == 4:
                 out_data = stage4(n, in_data)
         
@@ -233,6 +236,13 @@ if __name__ == "__main__":
         type=int,
         default=1,
         choices=[1, 2, 3, 4]
+    )
+
+    parser.add_argument(
+        "--time", "-t",
+        type=int,
+        default=3,
+        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     )
 
     parser.add_argument(
