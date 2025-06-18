@@ -27,7 +27,6 @@ import argparse
 from func_timeout import func_timeout, FunctionTimedOut
 import numpy as np
 import pickle
-import signal
 
 from constants import get_filename, \
                       RATE_THRESHOLD, DISTANCE_THRESHOLD, \
@@ -36,12 +35,6 @@ from distance import distance
 from helix import HelixCode
 from search import find_all_codes
 from util import stimify_symplectic
-
-class TimeoutException(Exception):
-    pass
-
-def _timeout_handler(signum, frame):
-    raise TimeoutException()
 
 def stage1(n:int, Z_wt:int, X_wt:int, rate_filter:bool=True):
     """
@@ -82,7 +75,7 @@ def stage2(n:int, codes:list, verbose:bool=False):
     return passing_codes
 
 
-def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
+def stage3(n:int, codes:list, t:int = 3, verbose:bool = False):
     """
     Stage 3 filtering. 
 
@@ -108,26 +101,14 @@ def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
         except FunctionTimedOut:
             d = -1
             if verbose:
-                print(f"Distance calculation timed out at {t}s for code group = {group}, z0 = {z0}, x0 = {x0}")
-        #old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
-        #signal.alarm(t)
-        #try:
-        #    d = code.get_d()
-        #except TimeoutException:
-        #    d = -1
-        #    if verbose:
-        #        print(f"Distance calculation timed out at {t}s for code {code}, z0 = {z0}, x0 = {x0}")
-        #finally:
-        #    # Clean up: cancel pending alarms & restore the old handler
-        #    signal.alarm(0)
-        #    signal.signal(signal.SIGALRM, old_handler)
+                print(f"Distance calculation timed out at {t}s for [[{n}, {k}]] {'CSS' if is_css else 'non-CSS'} code:\ngroup = {group}\nz0 =\n{z0}\nx0 =\n{x0}")
         goodness = k*d/n
         goodness_str = f" (GR = {round(goodness, 4)})" if d > 0 else ""
         if d == -1 or (d >= DISTANCE_THRESHOLD
                        and goodness >= DISTANCE_RATE_THRESHOLD):
             if verbose and (k, d) not in seen:
                 # Only print codes with genuinely new parameters.
-                print(f"[[{n}, {k}, {d}]]{goodness_str} code found")
+                print(f"[[{n}, {k}, {d}]]{goodness_str} {'CSS' if is_css else 'non-CSS'} code found")
                 if goodness >= 0.9:
                     print(f"*******  Someone has a bright future! *******")
             seen.add((k, d))
@@ -221,14 +202,12 @@ if __name__ == "__main__":
         "--Zweight", "-z",
         type=int,
         default=3,
-        choices=[2, 3, 4, 5, 6]
     )
 
     parser.add_argument(
         "--Xweight", "-x",
         type=int,
         default=3,
-        choices=[2, 3, 4, 5, 6]
     )
 
     parser.add_argument(
@@ -242,7 +221,6 @@ if __name__ == "__main__":
         "--time", "-t",
         type=int,
         default=3,
-        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     )
 
     parser.add_argument(
