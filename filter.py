@@ -108,7 +108,7 @@ def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
         except FunctionTimedOut:
             d = -1
             if verbose:
-                print(f"Distance calculation timed out at {t}s for code group = {group}, z0 = {z0}, x0 = {x0}")
+                print(f"Distance calculation timed out at {t}s for {'' if is_css else 'non-'}CSS [[{n}, {k}]] code\ngroup =\n{group}\nz0 =\n{z0}\nx0 =\n{x0}")
         #old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
         #signal.alarm(t)
         #try:
@@ -127,7 +127,7 @@ def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
                        and goodness >= DISTANCE_RATE_THRESHOLD):
             if verbose and (k, d) not in seen:
                 # Only print codes with genuinely new parameters.
-                print(f"[[{n}, {k}, {d}]]{goodness_str} code found")
+                print(f"[[{n}, {k}, {d}]]{goodness_str} {'' if is_css else 'non-'}CSS code found")
                 if goodness >= 0.9:
                     print(f"*******  Someone has a bright future! *******")
             seen.add((k, d))
