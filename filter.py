@@ -125,12 +125,12 @@ def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
         goodness_str = f" (GR = {round(goodness, 4)})" if d > 0 else ""
         if d == -1 or (d >= DISTANCE_THRESHOLD
                        and goodness >= DISTANCE_RATE_THRESHOLD):
-            if verbose and (k, d) not in seen:
+            if verbose and (k, d, is_css) not in seen:
                 # Only print codes with genuinely new parameters.
                 print(f"[[{n}, {k}, {d}]]{goodness_str} {'' if is_css else 'non-'}CSS code found")
                 if goodness >= 0.9:
                     print(f"*******  Someone has a bright future! *******")
-            seen.add((k, d))
+            seen.add((k, d, is_css))
             passing_codes.append((group, z0, x0, is_css, k, d,
                                   -1 if d == -1 else round(k*d/n, 5)))
         # else:
