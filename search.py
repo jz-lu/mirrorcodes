@@ -319,14 +319,14 @@ def decomposed_X0_candidates(X_wt, size):
                 result[i].append(x_list)
     return result
 
-def build_Z0_candidates(Z_wt, group, rate_filter = True):
+def build_Z0_candidates(Z_wt, group, min_k = 3):
     """
     Finds possible tuples Z0 that are worth searching over.
 
     Params:
         * Z_wt (int): The number of terms in Z0
         * group (np.ndarray): The group whose codes we are finding
-        * rate_filter (bool, optional): Whether codes should be filtered by rate
+        * min_k (int, optional): Whether codes should be filtered to exclude those with k < min_k
     
     Returns:
         * List of Z0 candidates with possible isomorphisms. Each candidate is a
@@ -366,8 +366,8 @@ def build_Z0_candidates(Z_wt, group, rate_filter = True):
         #and increment there if it is not canonical
         if (jump > 0 or np.any(z_indices[:-1] >= z_indices[1:])
             or not is_Z_canonical(group, zs, isos)
-            or (rate_filter and (not np.any(zs[:, odd_indices])
-                or compute_rank_from_tuples(group, zs) == n))):
+            or (min_k and (not np.any(zs[:, odd_indices])
+                or compute_rank_from_tuples(group, zs) > n - min_k))):
             jump = max(jump, 1)
             index_val = (index_val // jump + 1) * jump
             continue
@@ -377,7 +377,7 @@ def build_Z0_candidates(Z_wt, group, rate_filter = True):
         index_val += 1
     return result
 
-def build_X0_candidates(X_wt, group, rate_filter = True):
+def build_X0_candidates(X_wt, group, min_k = 3):
     """
     Finds possible tuples X0 that are worth searching over. Split up by the gcd of
     the Zs, which defines isomorphisms under which the Xs are minimal.
@@ -385,7 +385,7 @@ def build_X0_candidates(X_wt, group, rate_filter = True):
     Params:
         * X_wt (int): The number of terms in X0
         * group (np.ndarray): The group whose codes we are finding
-        * rate_filter (bool, optional): Whether codes should be filtered by rate
+        * min_k (int, optional): Whether codes should be filtered to exclude those with k < min_k
     
     Returns:
         * List of lists of X0 candidates. The outer list is indexed by the gcd's of
@@ -426,8 +426,8 @@ def build_X0_candidates(X_wt, group, rate_filter = True):
             #and increment there if it is not increasing
             if (jump > 0 or np.any(x_indices[:-1] >= x_indices[1:])
                 or not is_X_canonical(group, xs, isos)
-                or (rate_filter and (not np.any(xs[:, odd_indices]) or
-                                     compute_rank_from_tuples(group, xs) == n))):
+                or (min_k > 0 and (not np.any(xs[:, odd_indices]) or
+                                     compute_rank_from_tuples(group, xs) > n - min_k))):
                 jump = max(jump, 1)
                 index_val = (index_val // jump + 1) * jump
                 continue
@@ -436,7 +436,7 @@ def build_X0_candidates(X_wt, group, rate_filter = True):
             index_val += 1
     return result
 
-def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True, return_k = True):
+def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
     """
     Finds all codes of weights Z_wt and X_wt for a given group.
 
@@ -444,7 +444,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True, return_k = Tr
         * Z_wt (int): The number of terms in Z0
         * X_wt (int): The number of terms in X0
         * group (np.ndarray): The group whose codes we are finding
-        * rate_filter (bool, optional): Whether codes should be filtered by rate
+        * min_k (int, optional): Whether codes should be filtered to exclude those with k < min_k
         * return_k (bool, optional): Whether to return k or not
     
     Returns:
@@ -458,15 +458,15 @@ def find_all_codes_in_group(Z_wt, X_wt, group, rate_filter = True, return_k = Tr
     codes = []
     for i in zs:
         for j in xs[i[1]]:
-            code = HelixCode(group, i[0], j, n=n)
-            if rate_filter and code.get_k() == 0:
+            code = HelixCode(group, i[0], j, n = n)
+            if min_k > 0 and code.get_k() < min_k:
                 continue
             canon_Z, canon_X = canonicalize(group, i[0], j)
             if np.all(i[0] == canon_Z) and np.all(j == canon_X):
                 codes.append((group, i[0], j, code.is_CSS()) + ((code.get_k(),) if return_k else ()))
     return codes
 
-def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
+def find_all_codes(n, Z_wt, X_wt, min_k = 3):
     """
     Finds all codes for a given number of qubits, n, of given weight.
 
@@ -474,7 +474,7 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
         * n (int): The number of physical qubits of the desired codes
         * Z_wt (int): The number of terms in Z0
         * X_wt (int): The number of terms in X0
-        * rate_filter (bool, optional): Whether codes should be filtered by rate
+        * min_k (int, optional): Whether codes should be filtered to exclude those with k < min_k
     
     Returns:
         * List of tuples of the form (group, Z0, X0) for valid codes. Each of Z0
@@ -484,7 +484,7 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
     if n < 2:
         return []
     #test if n is a power of 2 and if a weight is 3
-    if rate_filter and (Z_wt == 3 or X_wt == 3):
+    if min_k > 0 and (Z_wt == 3 or X_wt == 3):
         p = n
         while True:
             if p == 1:
@@ -495,7 +495,7 @@ def find_all_codes(n, Z_wt, X_wt, rate_filter = True):
     
     result = []
     for group in n_partitions(n):
-        result += find_all_codes_in_group(Z_wt, X_wt, group, rate_filter, return_k=rate_filter)
+        result += find_all_codes_in_group(Z_wt, X_wt, group, min_k, return_k = min_k > 0)
     return result
 
 def main():

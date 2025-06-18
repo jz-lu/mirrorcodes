@@ -43,7 +43,7 @@ class TimeoutException(Exception):
 def _timeout_handler(signum, frame):
     raise TimeoutException()
 
-def stage1(n:int, Z_wt:int, X_wt:int, rate_filter:bool=True):
+def stage1(n:int, Z_wt:int, X_wt:int, min_k:int = 3):
     """
     Stage 1 filtering. 
 
@@ -51,15 +51,15 @@ def stage1(n:int, Z_wt:int, X_wt:int, rate_filter:bool=True):
         * n (int): number of qubits.
         * Z_wt (int): number of elements of Z_0.
         * X_wt (int): number of elements of X_0.
-        * rate_filter (bool, optional): Whether to do stage 2 to speed up stage 1.
+        * min_k (int, optional): Whether to filter stage 1 to not include codes with k < min_k.
 
     Returns:
         * list of helix codes in (group, Z_0, X_0, IS_CSS, k) form which pass stage 1,
     """
-    return find_all_codes(n, Z_wt, X_wt, rate_filter)
+    return find_all_codes(n, Z_wt, X_wt, min_k = min_k)
 
 
-def stage2(n:int, codes:list, verbose:bool=False):
+def stage2(n:int, codes:list, verbose:bool = False):
     """
     Stage 2 filtering. 
 
@@ -69,7 +69,7 @@ def stage2(n:int, codes:list, verbose:bool=False):
           which passed stage 1.
 
     Returns:
-        * list of helix codes in ((group, Z_0, X_0), k) form which pass stage 2.
+        * list of helix codes in (group, Z_0, X_0, IS_CSS, k) form which pass stage 2.
     """
     passing_codes = []
     for code_data in codes:
@@ -82,7 +82,7 @@ def stage2(n:int, codes:list, verbose:bool=False):
     return passing_codes
 
 
-def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
+def stage3(n:int, codes:list, t:int = 3, verbose:bool = False):
     """
     Stage 3 filtering. 
 
@@ -132,7 +132,7 @@ def stage3(n:int, codes:list, t:int=3, verbose:bool=False):
                     print(f"*******  Someone has a bright future! *******")
             seen.add((k, d, is_css))
             passing_codes.append((group, z0, x0, is_css, k, d,
-                                  -1 if d == -1 else round(k*d/n, 5)))
+                                  -1 if d == -1 else round(k * d / n, 5)))
         # else:
         #     if verbose:
         #         print(f"[[{n}, {k}, {d}]]{goodness} code is BAD")
@@ -160,6 +160,9 @@ def main(args):
     time = args.time
     if time is None:
         time = 3
+    mink = args.mink
+    if mink is None:
+        mink = 3
     stage = args.stage
     n = args.size
     print(f"Running: n = {n}")
@@ -167,7 +170,7 @@ def main(args):
 
     if args.fullsend:
         print("[Fullsend] Starting stage 1")
-        out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, rate_filter = True)
+        out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink)
         print(f"Filtered to {len(out_data)} codes")
         print("[Fullsend] Starting stage 2")
         out_data = stage2(n, out_data)
@@ -183,7 +186,7 @@ def main(args):
 
     else:
         if stage == 1:
-            out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, rate_filter = True)
+            out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink)
         else:
             in_file = f"{in_directory}/{get_filename(stage - 1, n)}"
             in_data = None
@@ -191,9 +194,9 @@ def main(args):
                 in_data = pickle.load(f)
 
             if stage == 2:
-                out_data = stage2(n, in_data, verbose=VERBOSE)
+                out_data = stage2(n, in_data, verbose = VERBOSE)
             elif stage == 3:
-                out_data = stage3(n, in_data, t = time, verbose=VERBOSE)
+                out_data = stage3(n, in_data, t = time, verbose = VERBOSE)
             elif stage == 4:
                 out_data = stage4(n, in_data)
         
@@ -215,6 +218,12 @@ if __name__ == "__main__":
         type=int,
         required=True,
         help="Number of qubits"
+    )
+
+    parser.add_argument(
+        "--mink", "-k",
+        type=int,
+        default=3,
     )
 
     parser.add_argument(
