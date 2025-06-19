@@ -13,7 +13,7 @@ from pysat.examples.rc2 import RC2
 from pysat.formula import WCNF
 import numpy as np
 
-def make_code(stabilizers) -> tuple[list[stim.PauliString], list[stim.PauliString], list[stim.PauliString]]:
+def make_code(stabilizers):
     """
     Takes a list of Paulis and outputs the stabilizers and logical operators.
 
@@ -49,8 +49,7 @@ def make_code(stabilizers) -> tuple[list[stim.PauliString], list[stim.PauliStrin
 
     return stabilizers, observable_xs, observable_zs
 
-def CSS_make_circuit(stabilizers: list[stim.PauliString],
-                 logical_paulis: list[stim.PauliString], obs_type) -> stim.Circuit:
+def CSS_make_circuit(stabilizers, logical_paulis, obs_type):
     """
     Make a distance computation circuit for a CSS code.
     This circuit alone does not solve the distance finding problem. 
@@ -115,8 +114,7 @@ def CSS_make_circuit(stabilizers: list[stim.PauliString],
 
     return circuit
 
-def stab_make_circuit(stabilizers: list[stim.PauliString],
-                 logical_paulis: list[stim.PauliString]) -> stim.Circuit:
+def stab_make_circuit(stabilizers, logical_paulis):
     """
     Make a distance computation circuit for a general, possibly non-CSS code.
     The upside is that this code will work for all stabilizer codes. 
@@ -184,7 +182,7 @@ def stab_make_circuit(stabilizers: list[stim.PauliString],
 
     return circuit
 
-def distance(stim_stab_tableau, IS_CSS=False, verbose=True):
+def distance(stim_stab_tableau, IS_CSS = False, verbose = True):
     """
     Calculate the distance of a stabilizer code.
 

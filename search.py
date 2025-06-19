@@ -23,14 +23,13 @@ Stage 2 (practicality):
     * Evaluate the circuit distance?
 """
 import itertools as it
-from math import gcd
 import numpy as np
 from primefac import primefac
 
 from distance import distance
 from helix import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical, HelixCode
 from util import binary_rank, compute_rank_from_tuples, find_isos, find_strides, \
-                 index_to_tuple, partitions
+                 gcd, index_to_tuple, partitions
 
 def is_canonical(helix_code):
     """

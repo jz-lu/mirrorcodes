@@ -5,7 +5,7 @@ Code file with a bunch of simple helper functions that process and convert betwe
 stim, Pauli string, and symplectic representations of codes.
 """
 import itertools as it
-from math import gcd
+import math
 import numpy as np
 import stim
 
@@ -117,6 +117,21 @@ def index_to_tuple(group, index):
         result.append(index % g)
         index //= g
     return (*result[::-1],)
+
+def gcd(*args):
+    """
+    Find the gcd of args.
+
+    Params:
+        * args (any number of ints): values whose gcd we want to find
+
+    Returns:
+        * Int containing the gcd of args.
+    """
+    result = args[0]
+    for num in args[1:]:
+        result = math.gcd(result, num)
+    return result
 
 def find_isos(group):
     """

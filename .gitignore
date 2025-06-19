@@ -1,1 +1,6 @@
 **/__pycache__/
+batch
+myenv/
+data/
+out/
+err/
