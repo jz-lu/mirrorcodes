@@ -144,7 +144,7 @@ def main(args):
     mink = args.mink
     if mink is None:
         mink = 3
-    stage = args.stage
+    stages = args.stages
     n = args.size
     print(f"Running: n = {n}")
     out_data = None
@@ -166,25 +166,27 @@ def main(args):
                 pickle.dump(out_data, f)
 
     else:
-        if stage == 1:
-            out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink)
-        else:
-            in_file = f"{in_directory}/{get_filename(stage - 1, n)}"
-            in_data = None
-            with open(in_file, "rb") as f:
-                in_data = pickle.load(f)
-
-            if stage == 2:
-                out_data = stage2(n, in_data, verbose = VERBOSE)
-            elif stage == 3:
-                out_data = stage3(n, in_data, t = time, verbose = VERBOSE)
-            elif stage == 4:
-                out_data = stage4(n, in_data)
-        
-        if SAVE_DATA:
-            out_file = f"{out_directory}/{get_filename(stage, n)}"
-            with open(out_file, "wb") as f:
-                pickle.dump(out_data, f)
+        for stage in str(stages):
+            stage = int(stage)
+            if stage == 1:
+                out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink)
+            else:
+                in_file = f"{in_directory}/{get_filename(stage - 1, n)}"
+                in_data = None
+                with open(in_file, "rb") as f:
+                    in_data = pickle.load(f)
+    
+                if stage == 2:
+                    out_data = stage2(n, in_data, verbose = VERBOSE)
+                elif stage == 3:
+                    out_data = stage3(n, in_data, t = time, verbose = VERBOSE)
+                elif stage == 4:
+                    out_data = stage4(n, in_data)
+            
+            if SAVE_DATA:
+                out_file = f"{out_directory}/{get_filename(stage, n)}"
+                with open(out_file, "wb") as f:
+                    pickle.dump(out_data, f)
     
     return
 
@@ -220,10 +222,10 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--stage", "-s",
+        "--stages", "-s",
         type=int,
         default=1,
-        choices=[1, 2, 3, 4]
+        choices=[1, 2, 3, 4, 12, 13, 14, 23, 24, 123, 124, 134, 234, 1234]
     )
 
     parser.add_argument(
