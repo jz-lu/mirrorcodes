@@ -264,4 +264,4 @@ def distance(stim_stab_tableau, IS_CSS = False, verbose = True):
             print(f"Problem solved in {t2 - t1:0.3f}s")
             print(f"Code distance = {dist}")
 
-    return dist
+    return int(dist)

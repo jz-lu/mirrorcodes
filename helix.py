@@ -368,7 +368,7 @@ def find_stabilizers(group, z0, x0):
 
 
 class HelixCode():
-    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None):
+    def __init__(self, group, z0, x0, n = None, k = None, d = None, is_css = None):
         self.group = group
         self.z0 = z0
         self.x0 = x0
@@ -376,7 +376,7 @@ class HelixCode():
         self.stim_tableau = None
         self.CSS = is_css
 
-        self.n = n
+        self.n = int(n)
         self.k = k
         self.d = d
 
@@ -392,7 +392,7 @@ class HelixCode():
 
     def get_n(self):
         if self.n is None:
-            self.n = np.prod(self.group)
+            self.n = int(np.prod(self.group))
         return self.n
     
     def get_k(self):

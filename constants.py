@@ -10,7 +10,9 @@ STAGEPFX = 'STAGE'
 def generate_identifier(n):
     return f'n{n}'
 
-def get_filename(stage, n):
+def get_filename(stage, n, r = None):
+    if stage == 3 and r is not None:
+        return f'{STAGEPFX}{stage}_{generate_identifier(n)}_part{r}.pkl'
     return f'{STAGEPFX}{stage}_{generate_identifier(n)}.pkl'
 
 RATE_THRESHOLD = 1/16

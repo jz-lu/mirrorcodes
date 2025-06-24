@@ -67,7 +67,7 @@ def stage2(n:int, codes:list, verbose:bool = False):
     passing_codes = []
     for code_data in codes:
         group, z0, x0, _, k = code_data
-        rate = k/n
+        rate = k / n
         if rate >= RATE_THRESHOLD:
             passing_codes.append(code_data)
             if verbose:
@@ -146,6 +146,7 @@ def main(args):
         mink = 3
     stages = args.stages
     n = args.size
+    r = args.range
     print(f"Running: n = {n}")
     out_data = None
 
@@ -179,12 +180,16 @@ def main(args):
                 if stage == 2:
                     out_data = stage2(n, in_data, verbose = VERBOSE)
                 elif stage == 3:
+                    if not r is None:
+                        start = min(100 * r, len(in_data))
+                        end = min(100 * (r + 1), len(in_data))
+                        in_data = in_data[start : end]
                     out_data = stage3(n, in_data, t = time, verbose = VERBOSE)
                 elif stage == 4:
                     out_data = stage4(n, in_data)
             
             if SAVE_DATA:
-                out_file = f"{out_directory}/{get_filename(stage, n)}"
+                out_file = f"{out_directory}/{get_filename(stage, n, r)}"
                 with open(out_file, "wb") as f:
                     pickle.dump(out_data, f)
     
@@ -232,6 +237,11 @@ if __name__ == "__main__":
         "--time", "-t",
         type=int,
         default=3,
+    )
+
+    parser.add_argument(
+        "--range", "-r",
+        type=int,
     )
 
     parser.add_argument(
