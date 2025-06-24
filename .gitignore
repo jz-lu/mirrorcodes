@@ -4,3 +4,6 @@ myenv/
 data/
 out/
 err/
+core.*
+*.swp
+*.pkl

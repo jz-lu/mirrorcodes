@@ -24,7 +24,7 @@ process those codes. Therefore, at each stage the next file saved is substantial
 smaller than the previous file saved.
 """
 import argparse
-from func_timeout import func_timeout, FunctionTimedOut
+import multiprocessing as mp
 import numpy as np
 import pickle
 
@@ -75,6 +75,21 @@ def stage2(n:int, codes:list, verbose:bool = False):
     return passing_codes
 
 
+def worker(queue, code):
+    """
+    Worker method for slow operation.
+
+    Params:
+        * queue: something for timeout thread
+        * code (tuple): code whose distance we want to find
+    """
+    try:
+        result = code.get_d()
+        queue.put(("ok", result))
+    except Exception as e:
+        queue.put(("err", e))
+
+
 def stage3(n:int, codes:list, t:int = 3, verbose:bool = False):
     """
     Stage 3 filtering. 
@@ -96,13 +111,23 @@ def stage3(n:int, codes:list, t:int = 3, verbose:bool = False):
         group, z0, x0, is_css, k = code_data
         code = HelixCode(group, z0, x0, n = n, k = k, is_css = is_css)
         d = -1
-        try:
-            d = func_timeout(t, code.get_d)
-        except FunctionTimedOut:
-            d = -1
+        
+        queue = mp.Queue()
+        process = mp.Process(target = worker, args = (queue, code))
+        process.start()
+        process.join(t)
+        if process.is_alive():
+            process.terminate()
+            process.join()
             if verbose:
                 print(f"Distance calculation timed out at {t}s for {'' if is_css else 'non-'}CSS [[{n}, {k}]] code\ngroup =\n{group}\nz0 =\n{z0}\nx0 =\n{x0}")
-        goodness = k*d/n
+        else:
+            status, payload = queue.get()
+            if status != 'ok':
+                raise payload
+            d = payload
+        
+        goodness = k * d / n
         goodness_str = f" (GR = {round(goodness, 4)})" if d > 0 else ""
         if d == -1 or (d >= DISTANCE_THRESHOLD
                        and goodness >= DISTANCE_RATE_THRESHOLD):
