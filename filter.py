@@ -147,6 +147,9 @@ def main(args):
     stages = args.stages
     n = args.size
     r = args.range
+    width = args.width
+    if width is None:
+        width = 100
     print(f"Running: n = {n}")
     out_data = None
 
@@ -180,9 +183,9 @@ def main(args):
                 if stage == 2:
                     out_data = stage2(n, in_data, verbose = VERBOSE)
                 elif stage == 3:
-                    if not r is None:
-                        start = min(100 * r, len(in_data))
-                        end = min(100 * (r + 1), len(in_data))
+                    if r is not None:
+                        start = min(width * r, len(in_data))
+                        end = min(width * (r + 1), len(in_data))
                         in_data = in_data[start : end]
                     out_data = stage3(n, in_data, t = time, verbose = VERBOSE)
                 elif stage == 4:
@@ -242,6 +245,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--range", "-r",
         type=int,
+    )
+
+    parser.add_argument(
+        "--width", "-w",
+        type=int,
+        default = 100,
     )
 
     parser.add_argument(
