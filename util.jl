@@ -7,14 +7,15 @@ stim, Pauli string, and symplectic representations of codes.
 using PythonCall
 using LinearAlgebra
 
+pyimport("pip").main(["install", "stim"])
 const stim = pyimport("stim")
 
 #=
 Return a sign-free Pauli string representation of the length 2`n` symplectic vector `x`.
 
 Input:
-    * n (int): number of qubits.
-    * x (numpy.ndarray): binary vector of length 2n, symplectically representing a n-qubit Pauli string.
+    * n (Int): number of qubits.
+    * x (Array): binary vector of length 2n, symplectically representing a n-qubit Pauli string.
 
 The convention for the symplectic vector is [Z | X] .
     
@@ -63,8 +64,8 @@ Test whether a stabilizer tableau is CSS. The code is defined to be CSS
 if every check is either all X's or all Z's.
 
 Params:
-    * stabs (np.ndarray): r x 2n binary matrix giving the stabilizer tableau in symplectic representation.
-    * n (int): number of qubits.
+    * stabs (Array): r x 2n binary matrix giving the stabilizer tableau in symplectic representation.
+    * n (Int): number of qubits.
     
 Returns:
     * bool indicating if `stabs` represents a CSS code.
@@ -78,7 +79,7 @@ end
 Finds index incrementing values for a given group.
 
 Params:
-    * group (np.ndarray): A list containing the group.
+    * group (Array): A list containing the group.
 
 Returns:
     * Array with index incrementing values, the backwards cumulative product.
@@ -103,8 +104,8 @@ Finds all partitions of n. I a lower bound on elements of the partitions,
 which is 1 by default. This function should be moved to util.py
     
 Input:
-    * n (int): the number whose partitions we want to compute.
-    * I (int, optional): the minimum entry in the partitions, 1 by default
+    * n (Int): the number whose partitions we want to compute.
+    * I (Int, optional): the minimum entry in the partitions, 1 by default
     
 Returns:
     * Iterable of tuples containing the partitions of n with minimum I or more
@@ -127,8 +128,8 @@ group". Notably, this works for larger indices too, but will only consider the
 index mod n.
 
 Params:
-    * group (np.ndarray): the group we are decomposing the index into
-    * index (int): A number from 0 to n - 1 corresponding to a tuple mod group.
+    * group (Array): the group we are decomposing the index into
+    * index (Int): A number from 0 to n - 1 corresponding to a tuple mod group.
     
 Returns:
     * A tuple with the same length as group, corresponding to the indexth
@@ -167,7 +168,7 @@ end
 Find all values relatively prime to group, with threading over a list.
     
 Params:
-    * group (int or np.ndarray): group size or list of group sizes
+    * group (Int or Array): group size or list of group sizes
 
 Returns:
     * List (of lists) of values relatively prime to each group size
@@ -185,7 +186,7 @@ Finds the rank mod 2 of a matrix A without explicit row swapping,
 using XOR to absorb the pivot row.
 
 Params:
-    * A (np.ndarray): the matrix whose rank we want to find
+    * A (Array): the matrix whose rank we want to find
 
 Returns:
     * int containing the rank of A
@@ -222,8 +223,8 @@ Finds an upper bound for the rank of the stabilizer matrix by just using one
 side of the parity checks.
 
 Params:
-    * group (np.ndarray): the group we are counting our qubits in
-    * qubits (np.ndarray): the qubits making up Z0 or X0, mod group
+    * group (Array): the group we are counting our qubits in
+    * qubits (Array): the qubits making up Z0 or X0, mod group
 
 Returns:
     * int which is the rank of the binary matrix with shifts of qubits
@@ -244,8 +245,8 @@ end
 Method for shifting x0 to make the first element have 0's or 1's.
 
 Params:
-    * group (np.ndarray): the group we are counting our qubits in
-    * x0 (np.ndarray): the qubits making up X0, mod group
+    * group (Array): the group we are counting our qubits in
+    * x0 (Array): the qubits making up X0, mod group
 
 Returns:
     * shifted version of x0

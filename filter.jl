@@ -122,7 +122,7 @@ function stage3(n::Int, codes; t::Int=3, verbose::Bool=false)
     seen = Set{Tuple{Int,Int,Bool}}()
     for code_data in codes
         group, z0, x0, is_css, k = code_data
-        code = HelixCode(group, z0, x0; n=n, k=k, is_css=is_css)
+        code = HelixCode(group, z0, x0; n = n, k = k, is_css = is_css)
         ok, dval = _with_timeout(() -> get_d(code), t)
         d = ok ? Int(dval) : -1
 
