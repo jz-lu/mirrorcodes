@@ -17,12 +17,62 @@ from util import find_isos, find_strides, shift_X
 from util import binary_rank, symp2Pauli, stimify_symplectic
 from distance import distance
 
+
+def _pair_lex_key(group, z0, x0):
+    """
+    Internal utility. Build a lex key for comparing pairs (Z0, X0).
+    Shorter first list first, then lex on Z0, then shorter second list, then lex on X0.
+    """
+    n = int(np.prod(group))
+    strides = find_strides(group)
+    z_combiner = find_strides([n] * len(z0))
+    x_combiner = find_strides([n] * len(x0))
+    z_idx = int(z_combiner @ z0 @ strides) if len(z0) else 0
+    x_idx = int(x_combiner @ x0 @ strides) if len(x0) else 0
+    return (len(z0), z_idx, len(x0), x_idx)
+
+
+def _twoG_iter(group):
+    """
+    Iterate over all elements of 2G = {2t : t in G} componentwise.
+    For odd modulus m, this is all residues 0..m-1 (step 1).
+    For even modulus m, this is the even residues 0,2,4,...,m-2 (step 2).
+    """
+    steps = [1 if m % 2 else 2 for m in group]
+    return it.product(*[range(0, m, s) for m, s in zip(group, steps)])
+
+
+def _column_permutations_by_size(group):
+    """
+    Build all column permutations that permute only among equal-size cyclic factors.
+    This models all isomorphisms that arise from reordering isomorphic factors.
+    """
+    # collect indices per modulus
+    by_size = {}
+    for idx, m in enumerate(group):
+        by_size.setdefault(int(m), []).append(idx)
+    # list of permutations per block
+    per_block = [list(it.permutations(block)) for block in by_size.values()]
+    # product to yield a full-column permutation each time
+    for choice in it.product(*per_block):
+        # start with identity mapping
+        perm = list(range(len(group)))
+        for block_perm in choice:
+            # block_perm is a permutation tuple of original indices belonging to one block
+            # place them into the same positions they originally occupied, reordered
+            for new_pos, old_idx in zip(sorted(block_perm), block_perm):
+                perm[new_pos] = old_idx
+        yield tuple(perm)
+
+
 def canonicalize_perms(group, z0, x0, isos, strides):
     """
     Secondary canonicalizer. This accepts the sets z0 and x0 and returns a guess
     for the canonical z0 and x0. Applies all tricks other than swapping z0 and x0.
     Various equivalences that this tries are reordering Z0 and X0, applying an
-    automorphism to any component group, and shifting the X0's by 2g, for some g.
+    automorphism to any component group, including permutations of equal-size
+    cyclic factors, and shifting the X0's by 2g, for some g (with the Z/X common
+    torsor anchor already applied).
 
     Params:
         * group (np.ndarray): 1D Array of all the group sizes in the factored
@@ -35,179 +85,197 @@ def canonicalize_perms(group, z0, x0, isos, strides):
           along the group dimensions. Number of columns should match length of group
           and not exceed the terms of group. Number of rows is the X weight. Also
           accepts tuples at any level.
-        * isos (np.ndarray): list of lists containing isomorphisms of group
+        * isos (np.ndarray): list of lists containing per-component multiplicative
+          automorphisms (units). Column permutations among equal-size factors
+          are also enumerated here.
         * strides (np.ndarray): strides for indexing qubits
 
     Returns:
         * Tuple containinng two elements. The first is the canonical version of z0,
           the second is the canonical version of x0.
     """
-    n = np.prod(group)
-
-    #initialize variables to do indexing and hold current min
+    group = np.array(group)
     z0 = np.array(z0)
     x0 = np.array(x0)
-    min_z, min_x = z0, x0
+    n = int(np.prod(group))
+
+    # initialize current minimum
+    best_z, best_x = z0.copy(), x0.copy()
+    best_key = _pair_lex_key(group, best_z, best_x)
+
     z_combiner = find_strides([n] * len(z0))
     x_combiner = find_strides([n] * len(x0))
-    min_z_index = z_combiner @ z0 @ strides
-    min_x_index = x_combiner @ x0 @ strides
-    max_x_index = n ** len(x0)
 
-    #check all permutations for z
-    for i in it.permutations(z0):
-        #shift first term to 0
-        new_z_shuffled = np.mod(i - i[0], group)
-        #check all isomorphisms
-        for j in it.product(*isos):
-            new_z_isoed = np.mod(new_z_shuffled * j, group)
-            new_z_index = z_combiner @ new_z_isoed @ strides
-            #new z is larger, skip
-            if new_z_index > min_z_index:
-                continue
-            #new z is smaller, set z min and set x index to be above max value
-            if new_z_index < min_z_index:
-                min_z = new_z_isoed
-                min_z_index = new_z_index
-                min_x_index = max_x_index
-            #check all x permutations
-            for k in it.permutations(np.mod(x0 - i[0], group)):
-                #apply isomorphism and shift
-                new_x_isoed = shift_X(group, np.mod(np.array(k) * j, group))
-                new_x_index = x_combiner @ new_x_isoed @ strides
-                if new_x_index > min_x_index:
+    # Enumerate column permutations within equal-size factor blocks
+    for col_perm in _column_permutations_by_size(group):
+        z_cols = z0[:, col_perm]
+        x_cols = x0[:, col_perm]
+
+        # Iterate over all permutations for z-rows
+        for z_rows in it.permutations(z_cols):
+            z_rows = np.array(z_rows)
+            # Anchor torsor: subtract first z to make z'[0]=0
+            z_anch = np.mod(z_rows - z_rows[0], group)
+
+            # Apply all component automorphisms (same multiplier vector to both sets)
+            for a in it.product(*isos):
+                a = np.array(a)
+                z_iso = np.mod(z_anch * a, group)
+
+                # Early pruning on Z
+                z_idx = int(z_combiner @ z_iso @ strides)
+                if (len(z_iso), z_idx) > (len(best_z), int(z_combiner @ best_z @ strides)):
                     continue
-                #found a new minimum, write it down
-                min_x_index = new_x_index
-                min_x = new_x_isoed
-    return min_z, min_x
+
+                # Prepare X with same anchor (subtract original first z before iso)
+                x_base = np.mod(x_cols - z_rows[0], group)
+
+                # Enumerate X-row permutations
+                for x_rows in it.permutations(x_base):
+                    x_rows = np.array(x_rows)
+                    x_iso = np.mod(x_rows * a, group)
+
+                    # Sweep residual 2G: identity-choice degree of freedom
+                    # Use util.shift_X to minimize over all X -> X + 2q
+                    x_shift = shift_X(group, x_iso)
+
+                    key = _pair_lex_key(group, z_iso, x_shift)
+                    if key < best_key:
+                        best_key = key
+                        best_z, best_x = z_iso, x_shift
+
+    return best_z, best_x
 
 
 def canonicalize(group, z0, x0):
     """
     Main canonicalizer. This accepts the sets z0 and x0 and returns the canonical
     isomorphic z0 and x0. The canonical form over equivalent codes is not unique.
-    Here are some guarantees about this function. z0[0] will only contain 0s. The
-    arrays z0[0], z0[1], z0[2], ... will be sorted. The same is true for the arrays
-    in x0. z0[1] will only contain entries x such that x is a divisor of the group
-    size (0 counts). x0[1] will only contain 0 or 1 entries, with 1 entries only
-    being acceptable if the corresponding group size is even. Various equivalences
-    that this tries are swapping Z0 and X0, reordering Z0 and X0, applying an
-    automorphism to any component group, and shifting the X0's by 2g, for some g.
+    Guarantees about this function: after canonicalization arrays z0[0] will only
+    contain 0s. Arrays of z0 and x0 are individually sorted by our lex rule.
+    Various equivalences tried are:
+      * swapping Z0 and X0 (only compared when lengths are equal),
+      * reordering Z0 and X0,
+      * automorphisms of any component group, including permutations of equal-size
+        factors (i.e., reindexing indistinguishable cyclic components),
+      * common torsor translation (Z,X)->(Z+p, X+p),
+      * identity-choice shift (Z,X)->(Z+h, X-h) which yields X->X+2q residual.
 
     Params:
         * group (np.ndarray): 1D Array of all the group sizes in the factored
           version of the group. Also accepts tuple.
         * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed
-          along the group dimensions. Number of columns should match length of group
-          and not exceed the terms of group. Number of rows is the Z weight. Also
-          accepts tuples at any level.
+          along the group dimensions.
         * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed
-          along the group dimensions. Number of columns should match length of group
-          and not exceed the terms of group. Number of rows is the X weight. Also
-          accepts tuples at any level.
+          along the group dimensions.
 
     Returns:
         * Tuple containinng two elements. The first is the canonical version of z0,
           the second is the canonical version of x0.
     """
-    #make sure that z0 is the shorter one
-    if len(z0) > len(x0):
-        return canonicalize(group, x0, z0)
-
-    n = np.prod(group)
     group = np.array(group)
     z0 = np.array(z0)
     x0 = np.array(x0)
-    isos = find_isos(group)
+    isos = find_isos(group)  # units per component
     strides = find_strides(group)
-    
-    #case where z0 has fewer terms than x0
-    if len(z0) < len(x0):
-        return canonicalize_perms(group, z0, x0, isos, strides)
 
-    #common case, where lengths are equal
-    #finds two options for the canonical form, one where z0 and x0 are switched,
-    #each iterating over automorphisms and permutations inside each of z0 and x0
+    # Always orient so the shorter list is first unless lengths are equal.
+    if len(z0) > len(x0):
+        return canonicalize(group, x0, z0)
+
+    # Option 1: keep (Z, X)
     z1, x1 = canonicalize_perms(group, z0, x0, isos, strides)
-    z2, x2 = canonicalize_perms(group, x0, z0, isos, strides)
-    z_combiner = find_strides([n] * len(z0))
-    x_combiner = find_strides([n] * len(x0))
-    z1_index = z_combiner @ z1 @ strides
-    z2_index = z_combiner @ z2 @ strides
-    x1_index = x_combiner @ x1 @ strides
-    x2_index = x_combiner @ x2 @ strides
-    if z1_index < z2_index or (z1_index == z2_index and x1_index < x2_index):
-        return z1, x1
-    return z2, x2
+
+    # Option 2: swap (X, Z) only when same length, mirroring original behavior
+    if len(z0) == len(x0):
+        z2, x2 = canonicalize_perms(group, x0, z0, isos, strides)
+        return (z1, x1) if _pair_lex_key(group, z1, x1) <= _pair_lex_key(group, z2, x2) else (z2, x2)
+
+    return (z1, x1)
 
 
 def is_Z_canonical(group, z0, isos):
     """
     Canonicalization checker for just Z's. Does not check legality. Merely checks
-    whether it can find a smaller equivalent z0 instance.
+    whether it can find a smaller equivalent z0 instance under:
+      * reordering within Z0,
+      * automorphisms of component groups (units),
+      * permutations among equal-size cyclic factors,
+      * a single torsor anchor (shift so first row is 0).
 
     Params:
         * group (np.ndarray): 1D Array of all the group sizes in the factored
           version of the group. Also accepts tuple.
         * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed
-          along the group dimensions. Number of columns should match length of
-          group and not exceed the terms of group. Number of rows is the Z weight.
-          Also accepts tuples at any level.
-        * isos (list of lists): list of all isomorphisms of each factor of group
+          along the group dimensions.
+        * isos (list of lists): list of per-component units
 
     Returns:
         * Boolean with whether z0 is canonical.
     """
     group = np.array(group)
     z0 = np.array(z0)
-    
-    #sorted index calculation
+
     strides = find_strides(group)
-    combiner = find_strides([np.prod(group)] * len(z0))
-    z0_index = combiner @ z0 @ strides
-    
-    #check over all permutations and isomorphisms
-    for i in it.permutations(z0):
-        shifted = np.mod(i - i[0], group)
-        for j in it.product(*isos):
-            if combiner @ np.mod(shifted * j, group) @ strides < z0_index:
-                return False
+    combiner = find_strides([int(np.prod(group))] * len(z0))
+    base_index = int(combiner @ z0 @ strides)
+
+    for col_perm in _column_permutations_by_size(group):
+        z_cols = z0[:, col_perm]
+        for rows in it.permutations(z_cols):
+            rows = np.array(rows)
+            shifted = np.mod(rows - rows[0], group)
+            for a in it.product(*isos):
+                a = np.array(a)
+                cand = np.mod(shifted * a, group)
+                if int(combiner @ cand @ strides) < base_index:
+                    return False
     return True
 
 
 def is_X_canonical(group, x0, isos):
     """
     Canonicalization checker for just X's. Does not check legality. Merely checks
-    whether it can find a smaller equivalent x0 instance.
+    whether it can find a smaller equivalent x0 instance under:
+      * reordering within X0,
+      * automorphisms of component groups (units),
+      * permutations among equal-size cyclic factors,
+      * the same torsor anchor (first row to 0),
+      * an independent residual sweep over 2G.
 
     Params:
         * group (np.ndarray): 1D Array of all the group sizes in the factored
           version of the group. Also accepts tuple.
         * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed
-          along the group dimensions. Number of columns should match length of
-          group and not exceed the terms of group. Number of rows is the X weight.
-          Also accepts tuples at any level.
-        * isos (list of lists): list of all isomorphisms we wish to consider
+          along the group dimensions.
+        * isos (list of lists): list of per-component units
 
     Returns:
-        * Boolean with whether z0 is canonical.
+        * Boolean with whether x0 is canonical.
     """
     group = np.array(group)
     x0 = np.array(x0)
-    
-    #sorted index calculation
+
     strides = find_strides(group)
-    combiner = find_strides([np.prod(group)] * len(x0))
-    x0_index = combiner @ x0 @ strides
-    
-    #check over all permutations and isomorphisms
-    for i in it.permutations(x0):
-        shifted = np.mod(i - np.array([j if k % 2 == 1 else 2 * (j // 2)
-                                       for j, k in zip(i[0], group)]), group)
-        for j in it.product(*isos):
-            if combiner @ np.mod(shifted * j, group) @ strides < x0_index:
-                return False
+    combiner = find_strides([int(np.prod(group))] * len(x0))
+
+    # Baseline: anchor by subtracting first row, then minimize over residual 2G only
+    base_anch = np.mod(x0 - x0[0], group)
+    base_idx = min(int(combiner @ (np.mod(base_anch + np.array(delta), group)) @ strides)
+                   for delta in _twoG_iter(group))
+
+    for col_perm in _column_permutations_by_size(group):
+        x_cols = x0[:, col_perm]
+        for rows in it.permutations(x_cols):
+            rows = np.array(rows)
+            anch = np.mod(rows - rows[0], group)
+            for a in it.product(*isos):
+                a = np.array(a)
+                cand = np.mod(anch * a, group)
+                cand_min_idx = min(int(combiner @ (np.mod(cand + np.array(delta), group)) @ strides)
+                                   for delta in _twoG_iter(group))
+                if cand_min_idx < base_idx:
+                    return False
     return True
 
 
@@ -237,9 +305,7 @@ def build_set(group, a, b):
     for i in a:
         for j in b:
             s.append(np.mod(j - i, group))
-
-    #throw away duplicates
-    return np.unique(s, axis = 0)
+    return np.unique(s, axis=0)
 
 
 def css_flips(group, z0, x0):
@@ -267,39 +333,24 @@ def css_flips(group, z0, x0):
           The second argument is [] if the first is False.
     """
     n = np.prod(group)
-    #build sets containing differences between two qubits with the same pauli on
-    #them, then combine the sets
     same_diffs = np.unique(np.vstack([build_set(group, z0, z0),
-                                      build_set(group, x0, x0)]), axis = 0)
-
-    #build set of differences of qubits with different paulis on them
+                                      build_set(group, x0, x0)]), axis=0)
     zx = build_set(group, z0, x0)
 
-    #for each difference between two elements of the same set...
-    flips = np.zeros((1, len(group)), dtype = int)
+    flips = np.zeros((1, len(group)), dtype=int)
     for g in same_diffs:
-        #find the group generated by it...
         gen_g = [g]
         cur = g
         while np.max(cur) > 0:
             cur = np.mod(cur + g, group)
             gen_g.append(cur)
         cur_flips = flips.copy()
-        #and use those groups to generate the full group of things connected by
-        #steps between qubits that must be in the same block (of the hadamarded
-        #and non-hadamarded blocks)
         for i in cur_flips:
-            flips = np.append(flips, np.mod(i + gen_g, group), axis = 0)
-        flips = np.unique(flips, axis = 0)
-        #if all the qubits lie in the same block, the code cannot be CSS
+            flips = np.append(flips, np.mod(i + gen_g, group), axis=0)
+        flips = np.unique(flips, axis=0)
         if len(flips) == n:
             return False, []
 
-    #the full sets of differences between qubits in the different blocks is given
-    #by the differences between Z0 and X0 PLUS any element of the group times 2,
-    #since this generates differences between elements of Z0 + g and X0 - g
-    #find full set of 2 * g for all g in the group
-    #find full set of differences between hadamarded and non hadamarded differences.
     bad = set()
     strides = find_strides(group)
     for i in it.product(*[range(0, a, 2 - a % 2) for a in group]):
@@ -334,41 +385,28 @@ def find_stabilizers(group, z0, x0):
           automatically be in CSS form if code is CSS.
         * boolean on whether or not the code is CSS
     """
-    #convert to numpy arrays
     group = np.array(group, np.int64)
     z0 = np.array(z0, np.int64)
     x0 = np.array(x0, np.int64)
-    
-    #compute n and define d as shorthand, the number of groups in the product
     n = int(np.prod(group))
-    d = len(group)
-
-    #compute strides, the number by which the index must go up to increment a
-    #particular index. Example: if the group is [4, 7, 3], strides is [21, 3, 1],
-    #because incrementing the index by 21 increments the first component of the
-    #qubit array exactly.
     strides = find_strides(group)
-    stabilizers = np.zeros((n, 2 * n), dtype = np.uint8)
+    stabilizers = np.zeros((n, 2 * n), dtype=np.uint8)
 
-    #if can_flip is true, the code is CSS and flips contains the qubits that need
-    #to be hadamarded (the format of these is not indices, but arrays
     can_flip, flips = css_flips(group, z0, x0)
 
-    #iterate over all qubits / all tuples in the group / all stabilizers
     for i, g in enumerate(it.product(*[range(a) for a in group])):
         stabilizers[i, np.mod(z0 + g, group) @ strides] = 1
         stabilizers[i, np.mod(x0 - g, group) @ strides + n] = 1
 
-    #flip qubits that need hadamarding if code is css
     if can_flip:
         for g in flips:
             index = g @ strides
-            stabilizers[:, [index, index + n]] = stabilizers[:, [index + n, index]] 
+            stabilizers[:, [index, index + n]] = stabilizers[:, [index + n, index]]
     return stabilizers, can_flip
 
 
 class HelixCode():
-    def __init__(self, group, z0, x0, n = None, k = None, d = None, is_css = None):
+    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None):
         self.group = group
         self.z0 = z0
         self.x0 = x0
@@ -376,7 +414,7 @@ class HelixCode():
         self.stim_tableau = None
         self.CSS = is_css
 
-        self.n = int(n)
+        self.n = int(n) if n is not None else None
         self.k = k
         self.d = d
 
@@ -432,7 +470,7 @@ if __name__ == "__main__":
     print(canonicalize(CSS_group, X0, Z0))
     CSS_stabs = find_stabilizers(CSS_group, Z0, X0)
     print(f"Your CSS stabs are:")
-    for stab in CSS_stabs:
+    for stab in CSS_stabs[0]:
         print(symp2Pauli(stab, n))
 
     # Make some non-CSS codes and check if they are CSS

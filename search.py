@@ -31,11 +31,19 @@ from helix import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical
 from util import binary_rank, compute_rank_from_tuples, find_isos, find_strides, \
                  gcd, index_to_tuple, partitions
 
+
 def is_canonical(helix_code):
     """
     Check whether `helix_code` is in canonical form.
-    We say that a helix code (group, Z0, X0) is in canonical form if TODO
-    
+    We say that a helix code (group, Z0, X0) is in canonical form if it is the
+    lexicographically earliest representative among all codes equivalent under:
+        1) swapping Z0 and X0 (compared only when lengths are equal),
+        2) reordering within Z0 and X0,
+        3) torsor shift (Z, X)->(Z+p, X+p),
+        4) identity-choice shift (Z, X)->(Z+h, X-h) so jointly (Z, X)->(Z+p, X+p+2q),
+        5) component-group automorphisms: per-component units AND permutations of
+           equal-size cyclic factors (reindexing indistinguishable factors).
+
     Input:
         * helix_code (tuple): Tuple of (group, Z0, X0) where group is a tuple
           and Z0 and X0 are sets
@@ -64,6 +72,7 @@ def n_level_search(n, Z_wt, X_wt):
     """
     pass
 
+
 def num_indices(n, Z_wt, X_wt):
     """
     Compute number of possible codes on n qubits with given weights. This does not
@@ -86,6 +95,7 @@ def num_indices(n, Z_wt, X_wt):
     for i in it.groupby(list(primefac(n))):
         result *= len(list(partitions(len(list(i[1])))))
     return result * n ** (Z_wt + X_wt - 1)
+
 
 def multi_index_to_tuples(group, Z_wt, X_wt, index):
     """
@@ -122,19 +132,22 @@ def multi_index_to_tuples(group, Z_wt, X_wt, index):
     for _ in range(X_wt):
         Xs.append(index_to_tuple(group, index))
         X_nums.append(index % n)
-        index //= n
+        index /= n
+        index = int(index)
 
     #build Zs list
     for _ in range(Z_wt - 1):
         Zs.append(index_to_tuple(group, index))
         Z_nums.append(index % n)
-        index //= n
+        index /= n
+        index = int(index)
 
     #prepend Z0[0]
     Zs.append((0,) * len(group))
     Z_nums.append(0)
 
     return Zs[::-1], Xs[::-1], Z_nums[::-1], X_nums[::-1]
+
 
 def n_partitions(n):
     """
@@ -170,6 +183,7 @@ def n_partitions(n):
         result.append((*group_sizes,))
     
     return result
+
 
 def process_codes(n, Z_wt, X_wt, index_start = 0, index_end = None):
     """
@@ -240,6 +254,7 @@ def process_codes(n, Z_wt, X_wt, index_start = 0, index_end = None):
         index += 1
     return COUNTER
 
+
 def decomposed_Z0_candidates(Z_wt, size):
     """
     Finds possible elements of Z0[:, k] that are worth searching over for some k.
@@ -277,6 +292,7 @@ def decomposed_Z0_candidates(Z_wt, size):
                 [np.mod(z_list * i, size) @ strides for i in isos]):
             result.append((z_list, gcd(*zs, size) % size))
     return result
+
 
 def decomposed_X0_candidates(X_wt, size):
     """
@@ -317,6 +333,7 @@ def decomposed_X0_candidates(X_wt, size):
                     [np.mod(x_list * j, size) @ strides for j in isos_by_gcd[i]]):
                 result[i].append(x_list)
     return result
+
 
 def build_Z0_candidates(Z_wt, group, min_k = 3):
     """
@@ -375,6 +392,7 @@ def build_Z0_candidates(Z_wt, group, min_k = 3):
                                          for i in range(d)]) @ gcd_strides)))
         index_val += 1
     return result
+
 
 def build_X0_candidates(X_wt, group, min_k = 3):
     """
@@ -435,6 +453,7 @@ def build_X0_candidates(X_wt, group, min_k = 3):
             index_val += 1
     return result
 
+
 def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
     """
     Finds all codes of weights Z_wt and X_wt for a given group.
@@ -464,6 +483,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
             if np.all(i[0] == canon_Z) and np.all(j == canon_X):
                 codes.append((group, i[0], j, code.is_CSS()) + ((code.get_k(),) if return_k else ()))
     return codes
+
 
 def find_all_codes(n, Z_wt, X_wt, min_k = 3):
     """
@@ -497,9 +517,11 @@ def find_all_codes(n, Z_wt, X_wt, min_k = 3):
         result += find_all_codes_in_group(Z_wt, X_wt, group, min_k, return_k = min_k > 0)
     return result
 
+
 def main():
     for i in range(32):
         print(i, len(find_all_codes(i, 3, 3)))
+
 
 if __name__ == "__main__":
     main()
