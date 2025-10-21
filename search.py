@@ -27,7 +27,7 @@ import numpy as np
 from primefac import primefac
 
 from distance import distance
-from helix import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical, HelixCode
+from helix import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical, MirrorCode
 from util import binary_rank, compute_rank_from_tuples, find_isos, find_strides, \
                  gcd, index_to_tuple, partitions
 
@@ -476,7 +476,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
     codes = []
     for i in zs:
         for j in xs[i[1]]:
-            code = HelixCode(group, i[0], j, n = n)
+            code = MirrorCode(group, i[0], j, n = n)
             if min_k > 0 and code.get_k() < min_k:
                 continue
             canon_Z, canon_X = canonicalize(group, i[0], j)

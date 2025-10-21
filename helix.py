@@ -16,6 +16,7 @@ import numpy as np
 from util import find_isos, find_strides, shift_X
 from util import binary_rank, symp2Pauli, stimify_symplectic
 from distance import distance
+import stim
 
 
 def _pair_lex_key(group, z0, x0):
@@ -405,11 +406,44 @@ def find_stabilizers(group, z0, x0):
     return stabilizers, can_flip
 
 
-class HelixCode():
+def pauli_to_observable_include_target(pauli: stim.PauliString) -> list[stim.GateTarget]:
+    obs_pauli_targets = []
+    for i in range(len(pauli)):
+        if pauli[i] != 0:
+            obs_pauli_targets.append(stim.target_pauli(i, pauli[i]))
+    return obs_pauli_targets
+
+def append_observable_includes_for_paulis(circuit: stim.Circuit, paulis: list[stim.PauliString]) -> None:
+    for i, obs in enumerate(paulis):
+        circuit.append(
+            "OBSERVABLE_INCLUDE",
+            targets=pauli_to_observable_include_target(pauli=obs),
+            arg=i
+        )
+
+class MirrorCode():
+    """
+    Class structure for a mirror code, specified by an abelian group, 
+    a Z-type generator, and a X-type generator.
+
+    Params:
+        * group: abelian group in structure form, i.e. list of powers of primes.
+        * z0: list of coordinates in structure form for Z-type generator.
+        * x0: list of coordinates in structure form for X-type generator.
+        * n (Optional): number of qubits = product of structure form orders.
+        * k (Optional): number of logical qubits.
+        * d (Optional): distance of the code.
+        * is_css (Optional): whether or not code is CSS.
+    
+    The optional variables can be specified if they are precomputed. If they are
+    not specified, they are computed by the class functions the first time they are queried.
+    """
     def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None):
         self.group = group
         self.z0 = z0
         self.x0 = x0
+        self.wx = len(x0)
+        self.wz = len(z0)
         self.stabilizers = None
         self.stim_tableau = None
         self.CSS = is_css
@@ -455,6 +489,100 @@ class HelixCode():
     
     def get_rel_dist(self):
         return self.get_d() / self.get_n()
+    
+    def syndrome_extraction_circuit(self, num_rounds=3) -> stim.Circuit:
+        """
+        Make a syndrome extraction circuit corresponding to the mirror code
+        instantiated in this class.
+
+        Params:
+            * num_rounds (int): number of rounds of syndrome extraction. 
+        
+        Returns:
+            * stim.Circuit object of the syndrome extraction circuit for the mirror code.
+        
+        TODO: add noise in the relevant parts of the circuit
+        """
+        assert self.wz == 3 and self.wx == 3, f"Idk how to make short circuits otherwise"
+
+        # The first n qubits are the data qubits, and will be the controls for the syndromes.
+        sec = stim.Circuit()
+        stabilizers = self.get_stabilizers()
+        ANCILLA_PER_STAB = 5
+        n = self.get_n()
+        stabilizer_stim = stimify_symplectic(stabilizers)
+
+        # Do some perfect measurements before we get into actual extraction for detection purposes.
+        # append_observable_includes_for_paulis(circuit=sec, paulis=all_logicals_paulis)
+        sec.append("MPP", stabilizer_stim)
+        # append_observable_includes_for_paulis(circuit=sec, paulis=all_logicals_paulis)
+
+        # Initialize ancillary system
+        for ancilla_block_qubit in range(n, (ANCILLA_PER_STAB+1)*n, ANCILLA_PER_STAB):
+            # Initialize first 2 qubits to |+>
+            sec.append("RX", [ancilla_block_qubit, ancilla_block_qubit + 1])
+
+            # Initialize last 3 qubits to |0>
+            sec.append("RZ", [ancilla_block_qubit + 2, ancilla_block_qubit + 3, ancilla_block_qubit + 4])
+
+            # Add a CNOT to make a Bell pair
+            sec.append("CNOT", [ancilla_block_qubit, ancilla_block_qubit + 2])
+        
+        for round_idx in range(num_rounds):
+            # Do the syndrome extraction in parallel for each stabilizer
+            for op in range(6):
+                for j, stab in enumerate(stabilizers):
+                    Z_part, X_part = stab[:n], stab[n:]
+
+                    # X part first
+                    X_supp = [i for i in range(n) if X_part[i] != 0]
+                    Z_supp = [i for i in range(n) if Z_part[i] != 0]
+                    assert len(X_supp) == len(Z_supp) == 3
+                    if op <= 2:
+                        # CNOT between X check and ancilla
+                        sec.append("CNOT", [X_supp[op], (j+1)*n + op])
+                        if op == 1:
+                            # Do a CNOT between ancillas 0 and 3
+                            sec.append("CNOT", [(j+1)*n, (j+1)*n + 3])
+                        elif op == 2:
+                            # Do a CNOT between ancillas 1 and 4
+                            sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 4])
+                    elif op <= 5:
+                        # CZ between Z check and anncilla
+                        if op == 3:
+                            # Also add 2 CNOT gates between the ancillas
+                            sec.append("CZ", [Z_supp[0], (j+1)*n])
+                            sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 3])
+                            sec.append("CNOT", [(j+1)*n + 2, (j+1)*n + 4])
+                        elif op == 4:
+                            # Also add measurements of last 2 ancillas and detections for some ancillas, then reset
+                            sec.append("CZ", [Z_supp[1], (j+1)*n + 2])
+                            sec.append("MZ", [(j+1)*n + 3, (j+1)*n + 4])
+                            sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2)])
+                        elif op == 5:
+                            sec.append("CZ", [Z_supp[2], (j+1)*n + 1])
+                            sec.append("CNOT", [(j+1)*n, (j+1)*n + 2])
+                            # Reset the last 2 ancillas
+                            if round_idx < num_rounds - 1:
+                                sec.append("RZ", [(j+1)*n + 3])
+                                sec.append("RX", [(j+1)*n + 4])
+            
+            # If this is the last round, measure the first 3 ancillas and call it a day.
+            # If this is not the last round, also initialize a new Bell pair in parallel.
+            for j in range(n):
+                sec.append("MX", [(j+1)*n, (j+1)*n + 1]) # measure the first 2 ancillas 
+                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2)])
+                sec.append("MZ", [(j+1)*n + 2]) # measure the third ancilla
+                sec.append("DETECTOR", targets=[stim.target_rec(-1)])
+
+            if round_idx < num_rounds - 1: # more rounds to go
+                for j in range(n):
+                    sec.append("CNOT", [(j+1)*n + 3, (j+1)*n + 4])
+
+                    sec.append("SWAP", [(j+1)*n + 3, (j+1)*n]) #! this action should be noiseless
+                    sec.append("SWAP", [(j+1)*n + 4, (j+1)*n + 2]) #! this action should be noiseless
+
+        return sec
 
 
 if __name__ == "__main__":

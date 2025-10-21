@@ -32,7 +32,7 @@ from constants import get_filename, \
                       RATE_THRESHOLD, DISTANCE_THRESHOLD, \
                       DISTANCE_RATE_THRESHOLD
 from distance import distance
-from helix import HelixCode
+from helix import MirrorCode
 from search import find_all_codes
 from util import stimify_symplectic
 
@@ -109,7 +109,7 @@ def stage3(n:int, codes:list, t:int = 3, verbose:bool = False):
     seen = set()
     for code_data in codes:
         group, z0, x0, is_css, k = code_data
-        code = HelixCode(group, z0, x0, n = n, k = k, is_css = is_css)
+        code = MirrorCode(group, z0, x0, n = n, k = k, is_css = is_css)
         d = -1
         
         queue = mp.Queue()
