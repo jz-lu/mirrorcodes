@@ -490,13 +490,22 @@ class MirrorCode():
     def get_rel_dist(self):
         return self.get_d() / self.get_n()
     
-    def syndrome_extraction_circuit(self, num_rounds=3) -> stim.Circuit:
+    def syndrome_extraction_circuit(self, num_rounds=3, option=0) -> stim.Circuit:
         """
         Make a syndrome extraction circuit corresponding to the mirror code
         instantiated in this class.
+        There is an `option` command which lets you choose from a list of 
+        circuits to return (with different fault tolerance capabilities).
+        Currently we have an optimized implementation "made by hand" which only 
+        holds w
+
+        Options:
+            0. Not fault-equivalent to the cat-state syndrome extraction circui (SEC), but fewer 2-qubit gates
+            1. Fault-equivalent to the cat-state SEC.
 
         Params:
             * num_rounds (int): number of rounds of syndrome extraction. 
+            * option (int): menu of options for which circuit to output
         
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
@@ -509,6 +518,8 @@ class MirrorCode():
         sec = stim.Circuit()
         stabilizers = self.get_stabilizers()
         ANCILLA_PER_STAB = 5
+        if option == 1:
+            ANCILLA_PER_STAB = 6
         n = self.get_n()
         stabilizer_stim = stimify_symplectic(stabilizers)
 
@@ -517,70 +528,137 @@ class MirrorCode():
         sec.append("MPP", stabilizer_stim)
         # append_observable_includes_for_paulis(circuit=sec, paulis=all_logicals_paulis)
 
-        # Initialize ancillary system
-        for ancilla_block_qubit in range(n, (ANCILLA_PER_STAB+1)*n, ANCILLA_PER_STAB):
-            # Initialize first 2 qubits to |+>
-            sec.append("RX", [ancilla_block_qubit, ancilla_block_qubit + 1])
+        if option == 0:
+            # Initialize ancillary system
+            for ancilla_block_qubit in range(n, (ANCILLA_PER_STAB+1)*n, ANCILLA_PER_STAB):
+                # Initialize first 2 qubits to |+>
+                sec.append("RX", [ancilla_block_qubit, ancilla_block_qubit + 1])
 
-            # Initialize last 3 qubits to |0>
-            sec.append("RZ", [ancilla_block_qubit + 2, ancilla_block_qubit + 3, ancilla_block_qubit + 4])
+                # Initialize last 3 qubits to |0>
+                sec.append("RZ", [ancilla_block_qubit + 2, ancilla_block_qubit + 3, ancilla_block_qubit + 4])
 
-            # Add a CNOT to make a Bell pair
-            sec.append("CNOT", [ancilla_block_qubit, ancilla_block_qubit + 2])
-        
-        for round_idx in range(num_rounds):
-            # Do the syndrome extraction in parallel for each stabilizer
-            for op in range(6):
-                for j, stab in enumerate(stabilizers):
-                    Z_part, X_part = stab[:n], stab[n:]
-
-                    # X part first
-                    X_supp = [i for i in range(n) if X_part[i] != 0]
-                    Z_supp = [i for i in range(n) if Z_part[i] != 0]
-                    assert len(X_supp) == len(Z_supp) == 3
-                    if op <= 2:
-                        # CNOT between X check and ancilla
-                        sec.append("CNOT", [X_supp[op], (j+1)*n + op])
-                        if op == 1:
-                            # Do a CNOT between ancillas 0 and 3
-                            sec.append("CNOT", [(j+1)*n, (j+1)*n + 3])
-                        elif op == 2:
-                            # Do a CNOT between ancillas 1 and 4
-                            sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 4])
-                    elif op <= 5:
-                        # CZ between Z check and anncilla
-                        if op == 3:
-                            # Also add 2 CNOT gates between the ancillas
-                            sec.append("CZ", [Z_supp[0], (j+1)*n])
-                            sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 3])
-                            sec.append("CNOT", [(j+1)*n + 2, (j+1)*n + 4])
-                        elif op == 4:
-                            # Also add measurements of last 2 ancillas and detections for some ancillas, then reset
-                            sec.append("CZ", [Z_supp[1], (j+1)*n + 2])
-                            sec.append("MZ", [(j+1)*n + 3, (j+1)*n + 4])
-                            sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2)])
-                        elif op == 5:
-                            sec.append("CZ", [Z_supp[2], (j+1)*n + 1])
-                            sec.append("CNOT", [(j+1)*n, (j+1)*n + 2])
-                            # Reset the last 2 ancillas
-                            if round_idx < num_rounds - 1:
-                                sec.append("RZ", [(j+1)*n + 3])
-                                sec.append("RX", [(j+1)*n + 4])
+                # Add a CNOT to make a Bell pair
+                sec.append("CNOT", [ancilla_block_qubit, ancilla_block_qubit + 2])
             
-            # If this is the last round, measure the first 3 ancillas and call it a day.
-            # If this is not the last round, also initialize a new Bell pair in parallel.
-            for j in range(n):
-                sec.append("MX", [(j+1)*n, (j+1)*n + 1]) # measure the first 2 ancillas 
-                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2)])
-                sec.append("MZ", [(j+1)*n + 2]) # measure the third ancilla
-                sec.append("DETECTOR", targets=[stim.target_rec(-1)])
+            for round_idx in range(num_rounds):
+                # Do the syndrome extraction in parallel for each stabilizer
+                for op in range(6):
+                    for j, stab in enumerate(stabilizers):
+                        Z_part, X_part = stab[:n], stab[n:]
 
-            if round_idx < num_rounds - 1: # more rounds to go
+                        # X part first
+                        X_supp = [i for i in range(n) if X_part[i] != 0]
+                        Z_supp = [i for i in range(n) if Z_part[i] != 0]
+                        assert len(X_supp) == len(Z_supp) == 3
+                        if op <= 2:
+                            # CNOT between X check and ancilla
+                            sec.append("CNOT", [X_supp[op], (j+1)*n + op])
+                            if op == 1:
+                                # Do a CNOT between ancillas 0 and 3
+                                sec.append("CNOT", [(j+1)*n, (j+1)*n + 3])
+                            elif op == 2:
+                                # Do a CNOT between ancillas 1 and 4
+                                sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 4])
+                        elif op <= 5:
+                            # CZ between Z check and anncilla
+                            if op == 3:
+                                # Also add 2 CNOT gates between the ancillas
+                                sec.append("CZ", [Z_supp[0], (j+1)*n])
+                                sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 3])
+                                sec.append("CNOT", [(j+1)*n + 2, (j+1)*n + 4])
+                            elif op == 4:
+                                # Also add measurements of last 2 ancillas and detections for some ancillas, then reset
+                                sec.append("CZ", [Z_supp[1], (j+1)*n + 2])
+                                sec.append("MZ", [(j+1)*n + 3, (j+1)*n + 4])
+                                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2)])
+                            elif op == 5:
+                                sec.append("CZ", [Z_supp[2], (j+1)*n + 1])
+                                sec.append("CNOT", [(j+1)*n, (j+1)*n + 2])
+                                # Reset the last 2 ancillas
+                                if round_idx < num_rounds - 1:
+                                    sec.append("RZ", [(j+1)*n + 3])
+                                    sec.append("RX", [(j+1)*n + 4])
+                
+                # If this is the last round, measure the first 3 ancillas and call it a day.
+                # If this is not the last round, also initialize a new Bell pair in parallel.
                 for j in range(n):
-                    sec.append("CNOT", [(j+1)*n + 3, (j+1)*n + 4])
+                    sec.append("MX", [(j+1)*n, (j+1)*n + 1]) # measure the first 2 ancillas 
+                    sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2)])
+                    sec.append("MZ", [(j+1)*n + 2]) # measure the third ancilla
+                    sec.append("DETECTOR", targets=[stim.target_rec(-1)])
 
-                    sec.append("SWAP", [(j+1)*n + 3, (j+1)*n]) #! this action should be noiseless
-                    sec.append("SWAP", [(j+1)*n + 4, (j+1)*n + 2]) #! this action should be noiseless
+                if round_idx < num_rounds - 1: # more rounds to go
+                    for j in range(n):
+                        sec.append("CNOT", [(j+1)*n + 3, (j+1)*n + 4])
+
+                        sec.append("SWAP", [(j+1)*n + 3, (j+1)*n]) #! this action should be noiseless
+                        sec.append("SWAP", [(j+1)*n + 4, (j+1)*n + 2]) #! this action should be noiseless
+
+        elif option == 1:
+            for ancilla_block_qubit in range(n, (ANCILLA_PER_STAB+1)*n, ANCILLA_PER_STAB):
+                # Initialize first 3 qubits to |+>
+                sec.append("RX", [ancilla_block_qubit, ancilla_block_qubit + 1, ancilla_block_qubit + 2])
+
+                # Initialize last 3 qubits to |0>
+                sec.append("RZ", [ancilla_block_qubit + 3, ancilla_block_qubit + 4, ancilla_block_qubit + 5])
+
+            for round_idx in range(num_rounds):
+                # Do the syndrome extraction in parallel for each stabilizer
+                for op in range(7):
+                    for j, stab in enumerate(stabilizers):
+                        Z_part, X_part = stab[:n], stab[n:]
+
+                        # X part first
+                        X_supp = [i for i in range(n) if X_part[i] != 0]
+                        Z_supp = [i for i in range(n) if Z_part[i] != 0]
+                        assert len(X_supp) == len(Z_supp) == 3
+                        if op <= 2:
+                            # CNOT between X check and ancilla
+                            sec.append("CNOT", [X_supp[op], (j+1)*n + op])
+                            if op == 1:
+                                # Do a CNOT between ancillas 0 and 3
+                                sec.append("CNOT", [(j+1)*n, (j+1)*n + 3])
+                            elif op == 2:
+                                # Do a CNOT between ancillas 1 and 4
+                                sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 3])
+                                sec.append("CNOT", [(j+1)*n, (j+1)*n + 4])
+                        elif op <= 5:
+                            # CZ between Z check and anncilla
+                            if op == 3:
+                                # Also add 2 CNOT gates between the ancillas
+                                sec.append("CZ", [Z_supp[0], (j+1)*n])
+                                sec.append("CNOT", [(j+1)*n + 2, (j+1)*n + 4])
+                                sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 5])
+                                # Add measurement of ancilla 3
+                                sec.append("MZ", [(j+1)*n + 3]) # A
+                            elif op == 4:
+                                # Add some CNOTs and measurements
+                                sec.append("CZ", [Z_supp[1], (j+1)*n + 1])
+                                sec.append("CNOT", [(j+1)*n + 2, (j+1)*n + 5])
+                                sec.append("MZ", [(j+1)*n + 4]) # B
+                            elif op == 5:
+                                sec.append("CZ", [Z_supp[2], (j+1)*n + 2])
+                                sec.append("CNOT", [(j+1)*n, (j+1)*n + 1])
+                                sec.append("MZ", [(j+1)*n + 5]) # C
+
+                                # Detector for A + B + C == 0
+                                sec.append("DETECTOR", targets=[stim.target_rec(-2*n-1), stim.target_rec(-n-1), stim.target_rec(-1)])
+                            elif op == 6:
+                                # Remaining measurements and detectors
+                                sec.append("MZ", [(j+1)*n + 1]) # E
+
+                                # Detector for A + E == 0
+                                sec.append("DETECTOR", targets=[stim.target_rec(-3*n-1), stim.target_rec(-1)]) 
+
+                                sec.append("MX", [(j+1)*n + 0]) # D
+                                sec.append("MX", [(j+1)*n + 2]) # F
+
+                                # TODO: I don't know what this last D+F detector is supposed to be?
+                                sec.append("DETECTOR", targets=[stim.target_rec(-2), stim.target_rec(-1)]) 
+
+
+        else:
+            raise ValueError(f"Option {option} is not a valid choice!")
 
         return sec
 
