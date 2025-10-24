@@ -1,17 +1,18 @@
-# helixcodes
-Repository for numerics of helix codes
+# mirrorcodes
+Repository for numerics of mirror codes
 
 ## Construction
 
-Code to systematically construct helix codes given input in standard form.
+Code to systematically construct mirror codes given input in standard form.
 
 ## Analysis
 The analysis contains numerical techniques to analyze LDPC stabilizer codes which need not be CSS.
-These are not specific to helix codes and are stabilizer generalizations of CSS code numerical tools, 
+These are not specific to mirror codes and are stabilizer generalizations of CSS code numerical tools, 
 e.g. BP-OSD.
 
 The main tools required are 
 * Distance estimation
+* Optimized syndrome extraction circuits
 * Sparse decoding via BP-OSD
 * Pseudo-threshold analysis
 
