@@ -521,11 +521,12 @@ class MirrorCode():
         if option == 1:
             ANCILLA_PER_STAB = 6
         n = self.get_n()
-        stabilizer_stim = stimify_symplectic(stabilizers)
+        stabilizers_stim = stimify_symplectic(stabilizers)
 
         # Do some perfect measurements before we get into actual extraction for detection purposes.
         # append_observable_includes_for_paulis(circuit=sec, paulis=all_logicals_paulis)
-        sec.append("MPP", stabilizer_stim)
+        for stabilizer_stim in stabilizers_stim:
+            sec.append("MPP", stabilizer_stim)
         # append_observable_includes_for_paulis(circuit=sec, paulis=all_logicals_paulis)
 
         if option == 0:
@@ -604,7 +605,7 @@ class MirrorCode():
 
             for round_idx in range(num_rounds):
                 # Do the syndrome extraction in parallel for each stabilizer
-                for op in range(7):
+                for op in range(9):
                     for j, stab in enumerate(stabilizers):
                         Z_part, X_part = stab[:n], stab[n:]
 
@@ -649,12 +650,18 @@ class MirrorCode():
 
                                 # Detector for A + E == 0
                                 sec.append("DETECTOR", targets=[stim.target_rec(-3*n-1), stim.target_rec(-1)]) 
-
+                            elif op == 7:
                                 sec.append("MX", [(j+1)*n + 0]) # D
+                            elif op == 8:
                                 sec.append("MX", [(j+1)*n + 2]) # F
 
-                                # TODO: I don't know what this last D+F detector is supposed to be?
-                                sec.append("DETECTOR", targets=[stim.target_rec(-2), stim.target_rec(-1)]) 
+                                if round_idx == 0:
+                                    # Detect D + F + (corresponding stabilizer measurement) == 0
+                                    sec.append("DETECTOR", targets=[stim.target_rec(-6*n-1), stim.target_rec(-n-1), stim.target_rec(-1)]) 
+                                else:
+                                    # Detect D + F + (same but previous round) == 0
+                                    sec.append("DETECTOR", targets=[stim.target_rec(-7*n-1), stim.target_rec(-6*n-1), stim.target_rec(-n-1), stim.target_rec(-1)]) 
+
 
 
         else:
