@@ -54,6 +54,25 @@ def is_canonical(mirror_code):
     return mirror_code == canonicalize(*mirror_code)
 
 
+def n_level_search(n, Z_wt, X_wt):
+    """
+    Search mirror codes over `n` qubits with Z-weight `Z_wt` and X-weight `X_wt`.
+    Save the ones which pass stage 1.
+
+    Input:
+        * n (int): number of qubits
+        * Z_wt (int): weight of the Z's in each check
+        * X_wt (int): weight of the X's in each check
+    
+    Output:
+        * A .npy file for each code which passes the stage 1 test
+    
+    Returns:
+        * None
+    """
+    pass
+
+
 def num_indices(n, Z_wt, X_wt):
     """
     Compute number of possible codes on n qubits with given weights. This does not
@@ -456,13 +475,13 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
     xs = build_X0_candidates(X_wt, group)
     codes = []
     for i in zs:
-        for j in xs:
-            code = MirrorCode(group, i, j, n = n)
+        for j in xs[i[1]]:
+            code = MirrorCode(group, i[0], j, n = n)
             if min_k > 0 and code.get_k() < min_k:
                 continue
-            canon_Z, canon_X = canonicalize(group, i, j)
-            if np.all(i == canon_Z) and np.all(j == canon_X):
-                codes.append((group, i, j, code.is_CSS()) + ((code.get_k(),) if return_k else ()))
+            canon_Z, canon_X = canonicalize(group, i[0], j)
+            if np.all(i[0] == canon_Z) and np.all(j == canon_X):
+                codes.append((group, i[0], j, code.is_CSS()) + ((code.get_k(),) if return_k else ()))
     return codes
 
 
