@@ -27,6 +27,7 @@ import numpy as np
 from primefac import primefac
 
 from distance import distance
+from isomorphism import list_automorphisms
 from mirror import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical, MirrorCode
 from util import binary_rank, compute_rank_from_tuples, find_isos, find_strides, \
                  gcd, index_to_tuple, partitions
@@ -335,7 +336,26 @@ def build_Z0_candidates(Z_wt, group, min_k = 3):
     """
     n = np.prod(group)
     d = len(group)
-    candidates = [decomposed_Z0_candidates(Z_wt, i) for i in group]
+    
+    #compute possible indices. first is always 0, second is always a divisor, etc
+    candidates = np.zeros((Z_wt, d, 1))
+    for g, k in enumerate(group):
+        candidates[1, k] = [i for i in range(g) if i == 0 or g % i == 0]
+        for i in range(2, Z_wt):
+            candidates[i, k] = range(g)
+    candidates = [it.product(*c) for c in candidates]
+    
+    indices = find_strides(group)
+    autos = list(list_automorphisms(group))
+
+    result = []
+    for z in it.product(*candidates):
+        v = z @ indices
+        if v != sorted(v):
+            continue
+    
+
+
     lengths = [len(c) for c in candidates]
     #index incrementing amount for each index
     strides = find_strides(lengths)
@@ -451,6 +471,33 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
           X0 is a list/tuple of lists/tuples mod group. If return_k is true, also
           adds the k, the logical dimension of the code, to the tuple.
     """
+
+    n = np.prod(group)
+    d = len(group)
+    
+    #compute possible indices. first is always 0, second is always a divisor, etc
+    Z_candidates = np.zeros((Z_wt, d, 1))
+    for g, k in enumerate(group):
+        Z_candidates[1, k] = [i for i in range(g) if i == 0 or g % i == 0]
+        for i in range(2, Z_wt):
+            Z_candidates[i, k] = range(g)
+    Z_candidates = [it.product(*c) for c in Z_candidates]
+    
+    indices = find_strides(group)
+    autos = list(list_automorphisms(group))
+
+    result = []
+    for z in it.product(*Z_candidates):
+        v = z @ indices
+        if v != sorted(v):
+            continue
+        minrep = z
+        for p in it.permutations(z):
+            prod = np.tensordot(autos, p, axes = ([2], [1]))
+            
+
+
+
     n = np.prod(group)
     zs = build_Z0_candidates(Z_wt, group)
     xs = build_X0_candidates(X_wt, group)
