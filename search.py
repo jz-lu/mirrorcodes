@@ -27,10 +27,10 @@ import numpy as np
 from primefac import primefac
 
 from distance import distance
-from isomorphism import list_automorphisms
+from isomorphism import automorphisms_fixing_vectors, lex_minimal_vectors, push_to_lex_minimal
 from mirror import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical, MirrorCode
 from util import binary_rank, compute_rank_from_tuples, find_isos, find_strides, \
-                 gcd, index_to_tuple, partitions
+                 gcd, index_to_array, partitions
 
 
 def is_canonical(mirror_code):
@@ -455,6 +455,80 @@ def build_X0_candidates(X_wt, group, min_k = 3):
     return result
 
 
+def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
+    p = primefac(subgroup[0])[0]
+    result = np.array([])
+    candidates = np.array([[[0] * len(subgroup)]])
+    vec_indices = [0]
+    strides = find_strides(subgroup)
+    while True:
+        if vec_indices[-1] >= len(candidates[-1]):
+            if len(vec_indices) == 1:
+                break
+            vec_indices = vec_indices[:-2] + [vec_indices[-2] + 1]
+            candidates = candidates[:-1]
+            continue
+        Z_vals = np.array([candidates[i, val] for i, val in enumerate(vec_indices[:min(len(vec_indices), Z_wt)])]) @ strides
+        if len(set(Z_vals)) < len(Z_vals):
+            vec_indices[-1] += 1
+            continue
+        if len(vec_indices > Z_wt):
+            X_vals = np.array([candidates[i + Z_wt, val] for i, val in enumerate(vec_indices[Z_wt:len(vec_indices)])]) @ strides
+            if len(set(X_vals)) < len(X_vals):
+                vec_indices[-1] += 1
+                continue
+        if len(vec_indices) < Z_wt + X_wt:
+            if len(vec_indices) == 1:
+                candidates = np.append(candidates, [lex_minimal_vectors(subgroup)], axis = 0)
+            else:
+                candidates = np.append(candidates, [[]], axis = 0)
+                isos = automorphisms_fixing_vectors(subgroup, [candidates[i, val] for i, val in enumerate(vec_indices)])
+                strides = find_strides(subgroup)
+                for i in range(np.prod(subgroup)):
+                    v = index_to_array(subgroup, i)
+                    if len(vec_indices) == Z_wt and max(v) > (1 if p == 2 else 0):
+                        if p > 2:
+                            break
+                    elif i <= min(np.array([np.mod(a @ v, subgroup) for a in isos]) @ strides):
+                        candidates[-1] = np.append(candidates[-1], [v], axis = 0)
+            vec_indices += [0]
+        else:
+            result += np.ndarray.copy(np.array([candidates[i, val] for i, val in enumerate(vec_indices)]))
+            vec_indices[-1] += 1
+    return result
+
+
+def permutation_bins(Z_wt, X_wt, subgroup, perm, candidates):
+    p = primefac(subgroup[0])[0]
+    result = []
+    strides = find_strides(subgroup)
+    for cand in candidates:
+        signs = [] #ADD TRACKING OF SIGNS. ADD IGNORING OF TRIVIAL ISOMORPHISM
+        c = np.ndarray.copy(cand[perm])
+        c -= c[0]
+        min_1 = push_to_lex_minimal(subgroup, c[1])
+        val = strides @ (min_1 - cand[1])
+        if val != 0:
+            result[0 if val < 0 else 2] += [cand]
+            continue
+        isos = []
+        for i in range(2, Z_wt + X_wt):
+            if i == 2:
+                isos = automorphisms_fixing_vectors(subgroup, c[1:i])
+            else:
+                isos = np.array([iso for iso in isos if np.mod(iso @ c[i - 1], subgroup) == c[i - 1]])
+            values = np.array([np.mod(iso @ c[i], subgroup) for iso in isos])
+            if i == Z_wt:
+                values %= 2 if p == 2 else 1
+            diff = min(values @ strides) - strides @ cand[i]
+            if diff != 0:
+                result[0 if diff < 0 else 2] = np.append(result[0 if diff < 0 else 2], [cand], axis = 0)
+                break
+            elif i == Z_wt + X_wt - 1:
+                result[1] = np.append(result[1], [cand], axis = 0)
+    return result
+
+
 def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
     """
     Finds all codes of weights Z_wt and X_wt for a given group.
@@ -474,6 +548,18 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
 
     n = np.prod(group)
     d = len(group)
+
+    #find prime blocks
+    blocks = np.array([])
+    for power in group:
+        if len(blocks) == 0 or primefac(power)[0] != primefac(blocks[-1, 0])[0]:
+            blocks = np.append(blocks, [[power]], axis = 0)
+        else:
+            blocks[-1] = np.append(blocks[-1], [power], axis = 0)
+    
+    candidates = [minimal_strings_for_subgroup(Z_wt, X_wt, block) for block in blocks]
+    
+
     
     #compute possible indices. first is always 0, second is always a divisor, etc
     Z_candidates = np.zeros((Z_wt, d, 1))

@@ -32,7 +32,7 @@ from constants import get_filename, \
                       RATE_THRESHOLD, DISTANCE_THRESHOLD, \
                       DISTANCE_RATE_THRESHOLD
 from distance import distance
-from helix import MirrorCode
+from mirror import MirrorCode
 from search import find_all_codes
 from util import stimify_symplectic
 

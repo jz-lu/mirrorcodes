@@ -1,352 +1,433 @@
-from itertools import product
-from math import prod
+from itertools import product, combinations
 
-def list_automorphisms(
-    g,
-    include_all_lifts=False,
-    max_count=None,
-):
+# ---------- Basic helpers ----------
+
+def factor_prime_power(n: int):
+    """Return (p, k) such that n = p**k with p prime."""
+    if n <= 1:
+        raise ValueError("Group factors must be prime powers ≥ 2.")
+    for p in range(2, n + 1):
+        if n % p == 0:
+            k = 0
+            m = n
+            while m % p == 0:
+                m //= p
+                k += 1
+            if m == 1:
+                return p, k
+    raise ValueError(f"{n} is not a prime power")
+
+
+def group_type_from_prime_powers(prime_powers):
     """
-    Enumerate automorphisms (as integer matrices) of the finite abelian group
-        G = Z_{g[0]} × Z_{g[1]} × ... × Z_{g[m-1]},
-    assuming each g[i] is a prime power.
-
-    Parameters
-    ----------
-    g : list[int]
-        Moduli for each cyclic factor. Every entry must be a prime power.
-    include_all_lifts : bool, default False
-        If False (default), produce one canonical lift for each valid mod-p pattern
-        (fastest and still returns valid automorphisms).
-        If True, enumerate *all* p-adic lifts (i.e., literally all automorphisms).
-    max_count : int | None
-        If provided, stop after yielding this many matrices.
-
-    Yields
-    ------
-    A : list[list[int]]
-        An m×m matrix (m=len(g)). Applying A to a vector x of residues and
-        reducing component-wise modulo g gives the image under the automorphism.
-
-    Notes
-    -----
-    • The matrix is block-diagonal across different primes; cross-prime blocks are zero.
-    • For a fixed prime p, order indices by nondecreasing exponent e (g[i]=p^e).
-      The endomorphism ring consists of matrices (a_ij) such that p^{e_i} | a_ij * p^{e_j},
-      i.e. a_ij ≡ 0 (mod p^{max(0, e_i-e_j)}). Mod p this forces a_ij ≡ 0 when e_i>e_j.
-      Automorphisms are those whose mod-p matrix has invertible diagonal blocks
-      for each group of equal exponents.
-
-    Helper:
-      • apply_iso(A, x, g) -> image vector
+    Given a list [p**λ1, ..., p**λr] (all same p, already sorted by λi),
+    return (p, [λ1,...,λr]).
     """
+    ps = []
+    lambdas = []
+    for n in prime_powers:
+        p, k = factor_prime_power(n)
+        ps.append(p)
+        lambdas.append(k)
+    if len(set(ps)) != 1:
+        raise ValueError("All factors must be powers of the *same* prime.")
+    return ps[0], lambdas
 
-    # ---------- small utilities ----------
-    def is_prime(n):
-        if n < 2:
-            return False
-        if n % 2 == 0:
-            return n == 2
-        f = 3
-        while f * f <= n:
-            if n % f == 0:
-                return False
-            f += 2
-        return True
 
-    def is_prime_power(n):
-        """Return (p, e) with n = p**e, or raise ValueError."""
-        if n < 2:
-            raise ValueError(f"{n} is not a valid prime power ≥ 2.")
-        # find smallest prime divisor
-        p = None
-        t = n
-        d = 2
-        while d * d <= t and p is None:
-            if t % d == 0:
-                p = d
-            d += 1 if d == 2 else 2
-        if p is None:
-            # n itself prime
-            return n, 1
-        # verify power
-        e = 0
-        while t % p == 0:
-            t //= p
-            e += 1
-        if t != 1 or not is_prime(p):
-            raise ValueError(f"{n} is not a prime power.")
-        return p, e
+# ---------- 1) Lexicographically minimal vectors ----------
 
-    def matmul_mod(A, x, mod_vec):
-        """Compute (A @ x) modulo component-wise moduli in mod_vec."""
-        m = len(mod_vec)
-        y = [0] * m
-        for i in range(m):
-            s = 0
-            row = A[i]
-            for j, aij in enumerate(row):
-                s += aij * x[j]
-            y[i] = s % mod_vec[i]
-        return y
+def lex_minimal_vectors(prime_powers):
+    """
+    Given a finite abelian p-group described as a list of prime powers:
 
-    # Rank over F_p for independence tests while enumerating GL(n,p).
-    def rank_mod_p(M, p):
-        """Row rank over F_p via Gaussian elimination (in place on a copy)."""
-        if not M:
-            return 0
-        r = [row[:] for row in M]
-        nrows = len(r)
-        ncols = len(r[0])
-        row = 0
-        for col in range(ncols):
-            # find pivot
-            pivot = None
-            for i in range(row, nrows):
-                if r[i][col] % p != 0:
-                    pivot = i
-                    break
-            if pivot is None:
-                continue
-            r[row], r[pivot] = r[pivot], r[row]
-            inv = pow(r[row][col] % p, -1, p)
-            # normalize pivot row
-            r[row] = [(val * inv) % p for val in r[row]]
-            # eliminate others
-            for i in range(nrows):
-                if i != row and r[i][col] % p != 0:
-                    factor = r[i][col] % p
-                    r[i] = [(r[i][j] - factor * r[row][j]) % p for j in range(ncols)]
-            row += 1
-            if row == nrows:
-                break
-        return row
+        prime_powers = [p**λ1, p**λ2, ..., p**λr]
 
-    def enumerate_GL(n, p):
-        """
-        Yield all n×n invertible matrices over F_p efficiently by building
-        an ordered basis column-by-column (no brute-force over p^{n^2}).
-        """
-        if n == 0:
-            yield []
-            return
+    with the same prime p, and sorted non-decreasing by λi, return all
+    lexicographically minimal vectors (one per Aut(G)-orbit) as described
+    in the previous discussion.
 
-        # recursive builder of independent columns
-        def extend(cols):
-            k = len(cols)
-            if k == n:
-                # Assemble matrix with these columns
-                # Represent as row-major lists (more convenient later)
-                Mcols = cols
-                # transpose columns -> rows
-                rows = [[Mcols[c][r] for c in range(n)] for r in range(n)]
-                yield rows
-                return
-            # precompute rank of current columns (as rows for rank function)
-            if k == 0:
-                base_rows = []
-                base_rank = 0
-            else:
-                # columns -> rows
-                base_rows = [[cols[c][r] for c in range(k)] for r in range(n)]
-                base_rank = rank_mod_p(base_rows, p)
-            for vec in product(range(p), repeat=n):
-                if all(v == 0 for v in vec):
-                    continue  # must not be zero
-                # check if independent of existing columns
-                # build augmented rows and check rank increased by 1
-                aug_rows = [row[:] for row in base_rows]
-                # append vec as an extra column
-                aug_rows = [aug_rows[r] + [vec[r]] for r in range(n)]
-                if rank_mod_p(aug_rows, p) == base_rank + 1:
-                    yield from extend(cols + [list(vec)])
+    Each vector is a tuple (x_1, ..., x_r) with 0 <= x_i < prime_powers[i].
+    Lex order is the usual tuple order in Python.
+    """
+    p, lambdas = group_type_from_prime_powers(prime_powers)
+    r = len(lambdas)
 
-        yield from extend([])
+    # Always include the zero vector (it is the only element in its orbit).
+    vectors = {tuple(0 for _ in range(r))}
 
-    # Enumerate all s×t matrices over F_p (row-major list of lists).
-    def enumerate_mat_mod_p(rows, cols, p):
-        for flat in product(range(p), repeat=rows * cols):
-            # turn into row-major
-            yield [list(flat[r * cols:(r + 1) * cols]) for r in range(rows)]
+    indices = list(range(r))
 
-    # Build all automorphism matrices for a single prime block.
-    def prime_block_automorphisms(indices, exponents, p):
-        """
-        indices : list[int]  (global indices belonging to this prime p)
-        exponents : list[int] (e_i with g[indices[i]] = p**e_i), ordered nondecreasing
-        p : prime
+    # We use the characterization:
+    # Choose indices i_1 < ... < i_t and exponents α_j with
+    #      0 <= α_1 < ... < α_t < λ_{i_t}
+    # and
+    #      λ_{i_1} - α_1 < ... < λ_{i_t} - α_t
+    # Then the corresponding vector has x_{i_j} = p**α_j, others = 0.
+    for t in range(1, r + 1):
+        for idxs in combinations(indices, t):
 
-        Yields m×m integer matrices for this block (m=len(indices)), with entries
-        already lifted to Z_{p^{e_i}} row-wise (minimal lift if include_all_lifts=False).
-        """
-        m = len(indices)
-        # Partition local indices by exponent value
-        exp_vals = sorted(set(exponents))
-        groups = []
-        for e in exp_vals:
-            grp = [i for i, ee in enumerate(exponents) if ee == e]
-            groups.append(grp)
-        sizes = [len(grp) for grp in groups]
-
-        # Precompute invertible diagonal options over F_p for each equal-exponent block
-        diag_options = [list(enumerate_GL(sz, p)) for sz in sizes]
-
-        # Helper: place a small block B into big mod-p matrix Mbar at rows R, cols C
-        def place(Mbar, R, C, B):
-            for rr, i in enumerate(R):
-                for cc, j in enumerate(C):
-                    Mbar[i][j] = B[rr][cc]
-
-        # Iterate over all choices:
-        # 1) Choose each diagonal block (invertible over F_p).
-        for diag_choice in product(*diag_options):
-            # Start with mod-p matrix
-            Mbar = [[0] * m for _ in range(m)]
-            # Place diagonal invertible blocks
-            for blk_idx, grp in enumerate(groups):
-                place(Mbar, grp, grp, diag_choice[blk_idx])
-
-            # 2) Choose super-diagonal blocks freely over F_p (forced zeros below diagonal mod p)
-            #    For groups k<l (exp[k] <= exp[l]), fill any matrix; for k>l, keep zeros.
-            def fill_super_blocks(k_start, cur_Mbar):
-                if k_start == len(groups):
-                    # Fully determined mod-p pattern; now lift to Z_{p^{e_i}}
-                    if include_all_lifts:
-                        # Enumerate all p-adic lifts satisfying divisibility a_ij ≡ 0 (mod p^{max(0,e_i-e_j)})
-                        # and a_ij ≡ cur_Mbar[i][j] (mod p) when allowed.
-                        # We'll recurse entry-by-entry.
-                        A = [[0] * m for _ in range(m)]
-                        def lift_entry(i, j):
-                            if i == m:
-                                # Emit a copy of A
-                                yield [row[:] for row in A]
-                                return
-                            ni = exponents[i]
-                            nj = exponents[j]
-                            delta = max(0, ni - nj)
-                            mod_row = p ** ni
-                            if delta >= 1:
-                                # Must be multiples of p^delta; mod-p value must be 0
-                                if cur_Mbar[i][j] % p != 0:
-                                    return  # incompatible (shouldn't happen by construction)
-                                choices = [ (t * (p ** delta)) % mod_row
-                                            for t in range(p ** (ni - delta)) ]
-                            else:
-                                # Free w.r.t. divisibility; must reduce to cur_Mbar[i][j] modulo p
-                                base = cur_Mbar[i][j] % p
-                                choices = [ (base + p * t) % mod_row
-                                            for t in range(p ** (ni - 1)) ] if ni > 0 else [base % mod_row]
-                            for val in choices:
-                                A[i][j] = val
-                                # advance indices
-                                nj_next = j + 1
-                                ni_next = i
-                                if nj_next == m:
-                                    nj_next = 0
-                                    ni_next = i + 1
-                                yield from lift_entry(ni_next, nj_next)
-
-                        yield from lift_entry(0, 0)
-                    else:
-                        # Minimal lift: just satisfy divisibility and mod-p constraints with smallest reps
-                        A = [[0] * m for _ in range(m)]
-                        for i in range(m):
-                            for j in range(m):
-                                ni = exponents[i]
-                                nj = exponents[j]
-                                delta = max(0, ni - nj)
-                                if delta >= 1:
-                                    A[i][j] = 0
-                                else:
-                                    A[i][j] = cur_Mbar[i][j] % p
-                        yield A
+            def rec(pos, prev_alpha, prev_beta, alphas):
+                """Recursively build α_1 < ... < α_t with β_j strictly increasing."""
+                if pos == t:
+                    # Build the actual group element
+                    coords = [0] * r
+                    for j, idx in enumerate(idxs):
+                        alpha = alphas[j]
+                        coords[idx] = p ** alpha
+                    vectors.add(tuple(coords))
                     return
 
-                # For fixed row-group k_start, iterate all super blocks (k_start, l) with l>k_start
-                k = k_start
-                rows = groups[k]
-                # recurse over all choices for blocks (k, l) for l>k
-                def fill_for_l(l, Macc):
-                    if l == len(groups):
-                        # move to next k
-                        fill_super_blocks(k_start + 1, Macc)
-                        return
-                    if l <= k:
-                        fill_for_l(l + 1, Macc)
-                        return
-                    cols = groups[l]
-                    # any matrix over F_p
-                    for block in enumerate_mat_mod_p(len(rows), len(cols), p):
-                        # place and continue
-                        Mnext = [row[:] for row in Macc]
-                        place(Mnext, rows, cols, block)
-                        fill_for_l(l + 1, Mnext)
+                i = idxs[pos]
+                lam = lambdas[i]
+                start_alpha = 0 if prev_alpha is None else prev_alpha + 1
 
-                fill_for_l(0, [row[:] for row in Mbar])
+                for alpha in range(start_alpha, lam):
+                    beta = lam - alpha
+                    if prev_beta is not None and not (beta > prev_beta):
+                        continue
+                    rec(pos + 1, alpha, beta, alphas + [alpha])
 
-            yield from fill_super_blocks(0, Mbar)
+            rec(0, None, None, [])
 
-    # ---------- main body ----------
-    m = len(g)
-    if m == 0:
-        # The trivial group has exactly one automorphism: the empty matrix.
-        yield []
-        return
+    # Return as a sorted list in lexicographic order
+    return sorted(vectors)
 
-    # Validate and collect prime/exponent for each component
-    pe = [is_prime_power(n) for n in g]  # list of (p,e)
-    primes = sorted(set(p for p, _ in pe))
 
-    # Group global indices by prime
-    prime_to_indices = {p: [] for p in primes}
-    prime_to_exps   = {p: [] for p in primes}
-    for idx, (p, e) in enumerate(pe):
-        prime_to_indices[p].append(idx)
-        prime_to_exps[p].append(e)
+# ---------- 2) Automorphisms fixing given vectors ----------
 
-    # For each prime, we need indices ordered by nondecreasing exponent
-    for p in primes:
-        zipped = list(zip(prime_to_indices[p], prime_to_exps[p]))
-        zipped.sort(key=lambda t: t[1])  # sort by exponent
-        prime_to_indices[p] = [i for i, _ in zipped]
-        prime_to_exps[p]    = [e for _, e in zipped]
+def endo_entry_options(p, lam_i, lam_j):
+    """
+    Allowed values for matrix entry a_ij of a group endomorphism:
 
-    # Enumerate per-prime block automorphisms, then combine into one big matrix
-    per_prime_lists = []
-    for p in primes:
-        per_prime_lists.append(list(prime_block_automorphisms(prime_to_indices[p],
-                                                              prime_to_exps[p],
-                                                              p)))
+    - We view the matrix over Z / p^{lam_i} Z in row i.
+    - For the homomorphism condition, p^{lam_j} * e_j must map to 0 in row i,
+      i.e. p^{lam_j} * a_ij ≡ 0 (mod p^{lam_i}).
 
-    # Now combine via block-diagonal embedding into the full m×m matrix.
-    # For each tuple of blocks, embed them and yield.
-    count = 0
-    for blocks in product(*per_prime_lists):
-        # start with all zeros
-        A = [[0] * m for _ in range(m)]
-        for p, Ablock in zip(primes, blocks):
-            idxs = prime_to_indices[p]
-            # place
-            for li, gi in enumerate(idxs):
-                for lj, gj in enumerate(idxs):
-                    A[gi][gj] = Ablock[li][lj] % g[gi]
-        yield A
-        count += 1
-        if max_count is not None and count >= max_count:
+    That forces:
+      - If lam_j < lam_i: a_ij must be divisible by p^{lam_i - lam_j}.
+      - If lam_j >= lam_i: a_ij can be any element mod p^{lam_i}.
+    """
+    n_i = p ** lam_i
+    if lam_j < lam_i:
+        step = p ** (lam_i - lam_j)
+        return list(range(0, n_i, step))
+    else:
+        return list(range(n_i))
+
+
+def rank_mod_p(rows, p):
+    """
+    Compute the rank over F_p of a matrix given by its list of rows.
+    rows: list of iterables of equal length, entries interpreted mod p.
+    """
+    if not rows:
+        return 0
+
+    m = len(rows[0])
+    M = [list(r) for r in rows]
+    rank = 0
+
+    for col in range(m):
+        # Find a pivot row with nonzero entry in this column
+        pivot = None
+        for i in range(rank, len(M)):
+            if M[i][col] % p != 0:
+                pivot = i
+                break
+        if pivot is None:
+            continue
+
+        # Swap pivot row up
+        M[rank], M[pivot] = M[pivot], M[rank]
+        inv = pow(M[rank][col], -1, p)
+
+        # Eliminate below
+        for i in range(rank + 1, len(M)):
+            factor = M[i][col] * inv % p
+            if factor == 0:
+                continue
+            for j in range(col, m):
+                M[i][j] = (M[i][j] - factor * M[rank][j]) % p
+
+        rank += 1
+        if rank == len(M):
+            break
+
+    return rank
+
+
+def automorphisms_fixing_vectors(prime_powers, fixed_vectors):
+    """
+    Enumerate all automorphisms of the abelian p-group described by `prime_powers`
+    that fix each vector in `fixed_vectors`.
+
+    Input:
+        prime_powers : list of ints [p**λ1, ..., p**λr],
+                       sorted non-decreasing by λi, all powers of the same prime p.
+        fixed_vectors: non-empty list of vectors (tuples/lists of length r).
+                       Entry v[i] is in Z / prime_powers[i] Z (we reduce mod).
+
+    Output:
+        A list of matrices. Each matrix is a list of `r` rows,
+        each row is a list of integers.
+
+    Interpretation:
+        Treat column vectors v as length-r tuples. The image A*v has i-th coordinate
+
+            (sum_j A[i][j] * v[j]) mod prime_powers[i].
+
+        Each returned matrix A is an automorphism of the group and
+        satisfies A*v = v for every v in `fixed_vectors`.
+    """
+    if not fixed_vectors:
+        raise ValueError("fixed_vectors must be non-empty.")
+
+    p, lambdas = group_type_from_prime_powers(prime_powers)
+    r = len(lambdas)
+
+    # Normalize fixed vectors modulo the appropriate coordinate moduli
+    fixed = []
+    for v in fixed_vectors:
+        if len(v) != r:
+            raise ValueError("Each fixed vector must have length equal to number of factors.")
+        fixed.append(tuple(v_i % n_i for v_i, n_i in zip(v, prime_powers)))
+
+    # Precompute all candidate rows for each i, imposing:
+    #   - endomorphism entry constraints (endo_entry_options),
+    #   - the condition that A(v) = v in coordinate i for each fixed vector v.
+    row_candidates = []
+    for i in range(r):
+        n_i = prime_powers[i]
+        opts_per_j = [endo_entry_options(p, lambdas[i], lambdas[j]) for j in range(r)]
+        candidates_i = []
+
+        for entries in product(*opts_per_j):
+            row = list(entries)
+            ok = True
+            for v in fixed:
+                dot = sum(row[j] * v[j] for j in range(r)) % n_i
+                if dot != v[i]:
+                    ok = False
+                    break
+            if ok:
+                candidates_i.append(tuple(row))
+
+        row_candidates.append(candidates_i)
+
+    automorphisms = []
+
+    def backtrack(i, current_rows, current_rows_mod_p):
+        """
+        Build the matrix row by row.
+
+        current_rows       : rows over Z / p^{λ_i} Z
+        current_rows_mod_p : corresponding rows reduced mod p
+        """
+        if i == r:
+            # All rows chosen. By construction, rows are linearly independent
+            # mod p, so det(A) is not divisible by p and A is an automorphism.
+            automorphisms.append([list(row) for row in current_rows])
             return
 
+        prev_rank = rank_mod_p(current_rows_mod_p, p)
 
-# ---------- convenience helper to apply an automorphism ----------
-def apply_iso(A, x, g):
-    """Apply matrix A to vector x and reduce component-wise modulo g."""
-    if len(A) != len(g) or any(len(row) != len(g) for row in A):
-        raise ValueError("Matrix shape must be len(g) × len(g).")
-    if len(x) != len(g):
-        raise ValueError("Vector length must be len(g).")
-    y = []
-    for i, row in enumerate(A):
-        s = 0
-        for aij, xj in zip(row, x):
-            s += aij * xj
-        y.append(s % g[i])
-    return y
+        for row in row_candidates[i]:
+            row_mod_p = tuple(c % p for c in row)
+
+            # A zero row modulo p cannot appear in an invertible matrix.
+            if all(c == 0 for c in row_mod_p):
+                continue
+
+            new_rows_mod_p = current_rows_mod_p + [row_mod_p]
+            new_rank = rank_mod_p(new_rows_mod_p, p)
+
+            # If rank does not increase, row is dependent; determinant mod p would be 0.
+            if new_rank != prev_rank + 1:
+                continue
+
+            backtrack(i + 1,
+                      current_rows + [row],
+                      new_rows_mod_p)
+
+    backtrack(0, [], [])
+    return automorphisms
+
+
+# ---------- (Optional) tiny example usage ----------
+
+if __name__ == "__main__":
+    # Example: G = C_2 ⊕ C_4 ⊕ C_8
+    G = [2, 4, 8]
+
+    print("Lex-minimal representatives:")
+    for v in lex_minimal_vectors(G):
+        print(v)
+
+    # All automorphisms (only fixing 0)
+    autos_all = automorphisms_fixing_vectors(G, [(0, 0, 0)])
+    print(f"\nNumber of automorphisms of C2 × C4 × C8: {len(autos_all)}")
+
+    # Automorphisms that fix a nonzero element, e.g. (0,0,1)
+    autos_fix = automorphisms_fixing_vectors(G, [(0, 0, 1)])
+    print(f"Automorphisms fixing (0,0,1): {len(autos_fix)}")
+
+
+from itertools import product
+
+# ---------- Small helpers for the pushing algorithm ----------
+
+def _p_adic_valuation(x, p):
+    """
+    v_p(x) for x != 0, with x an integer.
+    (We will only call this with x reduced modulo a power of p and x != 0.)
+    """
+    v = 0
+    while x % p == 0:
+        x //= p
+        v += 1
+    return v
+
+
+def element_order_p_group(prime_powers, v):
+    """
+    Compute the order of a vector v in the p-group given by prime_powers.
+
+    prime_powers: [p**λ1, ..., p**λr]
+    v           : iterable of length r, entries are integers (reduced mod n_i internally).
+
+    Returns: p^k, where k is the maximal exponent among the coordinates,
+             or 1 if v is the zero vector.
+    """
+    p, lambdas = group_type_from_prime_powers(prime_powers)
+    if len(v) != len(lambdas):
+        raise ValueError("Vector length must match number of factors.")
+
+    v_norm = [v_i % n_i for v_i, n_i in zip(v, prime_powers)]
+
+    max_exp = 0
+    any_nonzero = False
+    for coord, lam in zip(v_norm, lambdas):
+        if coord == 0:
+            continue
+        any_nonzero = True
+        val = _p_adic_valuation(coord, p)
+        exp = lam - val
+        if exp > max_exp:
+            max_exp = exp
+
+    if not any_nonzero:
+        return 1  # order of the zero element
+
+    return p ** max_exp
+
+
+def _automorphism_sending_vector(prime_powers, source, target):
+    """
+    Internal helper:
+    Try to construct a single automorphism A of the group (given by prime_powers)
+    such that A * source = target.
+
+    Returns:
+        - a matrix A (list of rows) if possible
+        - None if no such automorphism exists
+    """
+    p, lambdas = group_type_from_prime_powers(prime_powers)
+    r = len(lambdas)
+
+    if len(source) != r or len(target) != r:
+        raise ValueError("source and target must have same length as prime_powers.")
+
+    src = tuple(source[i] % prime_powers[i] for i in range(r))
+    tgt = tuple(target[i] % prime_powers[i] for i in range(r))
+
+    # Easy impossibility check: nonzero -> zero cannot happen under an automorphism.
+    if all(x == 0 for x in src) and any(x != 0 for x in tgt):
+        return None
+
+    # Zero -> zero: identity works.
+    if all(x == 0 for x in src) and all(x == 0 for x in tgt):
+        return [[int(i == j) for j in range(r)] for i in range(r)]
+
+    # Build candidate rows, enforcing A*src = tgt row-by-row and endomorphism constraints.
+    row_candidates = []
+    for i in range(r):
+        n_i = prime_powers[i]
+        opts_per_j = [endo_entry_options(p, lambdas[i], lambdas[j]) for j in range(r)]
+        candidates_i = []
+        for entries in product(*opts_per_j):
+            row = list(entries)
+            dot = sum(row[j] * src[j] for j in range(r)) % n_i
+            if dot == tgt[i]:
+                candidates_i.append(tuple(row))
+        row_candidates.append(candidates_i)
+
+    # Backtrack to pick rows such that the matrix is invertible modulo p.
+    def backtrack(i, current_rows, current_rows_mod_p):
+        if i == r:
+            # Full matrix with full rank mod p ⇒ automorphism.
+            return [list(row) for row in current_rows]
+
+        prev_rank = rank_mod_p(current_rows_mod_p, p)
+
+        for row in row_candidates[i]:
+            row_mod_p = tuple(c % p for c in row)
+            new_rows_mod_p = current_rows_mod_p + [row_mod_p]
+            new_rank = rank_mod_p(new_rows_mod_p, p)
+
+            # Require rank to increase by 1 at each step (independence mod p).
+            if new_rank != prev_rank + 1:
+                continue
+
+            result = backtrack(i + 1, current_rows + [row], new_rows_mod_p)
+            if result is not None:
+                return result
+
+        return None
+
+    return backtrack(0, [], [])
+
+
+# ---------- Main function: push to lex-minimal ----------
+
+def push_to_lex_minimal(prime_powers, v):
+    """
+    Given a p-group described by prime_powers = [p**λ1, ..., p**λr] and a vector v,
+    find the lexicographically minimal element w in the Aut(G)-orbit of v and
+    return a pair (w, A), where A is an automorphism matrix with A * v = w.
+
+    - prime_powers: list of prime powers, same prime, sorted by exponent.
+    - v           : iterable of ints, length r.
+
+    Returns:
+        list of rows (each a list of ints), the automorphism matrix.
+    """
+    p, lambdas = group_type_from_prime_powers(prime_powers)
+    r = len(lambdas)
+
+    if len(v) != r:
+        raise ValueError("Vector length must match number of factors.")
+
+    # Normalize v modulo the group.
+    v_norm = tuple(v_i % n_i for v_i, n_i in zip(v, prime_powers))
+
+    # Zero is fixed by every automorphism; it's already lex-minimal.
+    if all(x == 0 for x in v_norm):
+        return v_norm
+
+    # Order is an invariant under automorphisms, so only consider candidates with same order.
+    ord_v = element_order_p_group(prime_powers, v_norm)
+
+    # All lex-minimal representatives (one per orbit) for this group.
+    candidates = lex_minimal_vectors(prime_powers)
+
+    # Iterate in lex order and find the first candidate reachable from v.
+    for w in candidates:
+        if element_order_p_group(prime_powers, w) != ord_v:
+            continue
+
+        A = _automorphism_sending_vector(prime_powers, v_norm, w)
+        if A is not None:
+            return w
+
+    # Theoretically this should never happen if everything is coded correctly.
+    raise RuntimeError("No automorphism found mapping v to a lex-minimal representative.")

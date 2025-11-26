@@ -97,6 +97,27 @@ def partitions(n, I=1):
         for p in partitions(n - i, i):
             yield (i,) + p
 
+def index_to_array(group, index):
+    """
+    Compute an array representing a qubit in group, given an index from 0 to n - 1,
+    the size of the group. This is no different than expressing a number "base
+    group". Notably, this works for larger indices too, but will only consider the
+    index mod n.
+
+    Params:
+        * group (np.ndarray): the group we are decomposing the index into
+        * index (int): A number from 0 to n - 1 corresponding to a tuple mod group.
+    
+    Returns:
+        * A number array with the same length as group, corresponding to the indexth
+        array mod group.
+    """
+    result = np.array([])
+    for g in group[::-1]:
+        result += [index % g]
+        index //= g
+    return result[::-1]
+
 def index_to_tuple(group, index):
     """
     Compute a tuple representing a qubit in group, given an index from 0 to n - 1,
