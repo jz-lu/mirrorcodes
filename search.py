@@ -238,9 +238,9 @@ def process_codes(n, Z_wt, X_wt, index_start = 0, index_end = None):
 
 
 def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
-    p = primefac(subgroup[0])[0]
-    result = np.array([])
-    candidates = np.array([[[0] * len(subgroup)]])
+    p = list(primefac(subgroup[0]))[0]
+    result = []
+    candidates = [[[0] * len(subgroup)]]
     vec_indices = [0]
     strides = find_strides(subgroup)
     while True:
@@ -250,21 +250,21 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
             vec_indices = vec_indices[:-2] + [vec_indices[-2] + 1]
             candidates = candidates[:-1]
             continue
-        Z_vals = np.array([candidates[i, val] for i, val in enumerate(vec_indices[:min(len(vec_indices), Z_wt)])]) @ strides
+        Z_vals = np.array([candidates[i][val] for i, val in enumerate(vec_indices[:min(len(vec_indices), Z_wt)])]) @ strides
         if len(set(Z_vals)) < len(Z_vals):
             vec_indices[-1] += 1
             continue
-        if len(vec_indices > Z_wt):
-            X_vals = np.array([candidates[i + Z_wt, val] for i, val in enumerate(vec_indices[Z_wt:len(vec_indices)])]) @ strides
+        if len(vec_indices) > Z_wt:
+            X_vals = np.array([candidates[i + Z_wt][val] for i, val in enumerate(vec_indices[Z_wt:len(vec_indices)])]) @ strides
             if len(set(X_vals)) < len(X_vals):
                 vec_indices[-1] += 1
                 continue
         if len(vec_indices) < Z_wt + X_wt:
             if len(vec_indices) == 1:
-                candidates = np.append(candidates, [lex_minimal_vectors(subgroup)], axis = 0)
+                candidates += [lex_minimal_vectors(subgroup)]
             else:
-                candidates = np.append(candidates, [[]], axis = 0)
-                isos = automorphisms_fixing_vectors(subgroup, [candidates[i, val] for i, val in enumerate(vec_indices)])
+                candidates += [[]]
+                isos = automorphisms_fixing_vectors(subgroup, [candidates[i][val] for i, val in enumerate(vec_indices)])
                 strides = find_strides(subgroup)
                 for i in range(np.prod(subgroup)):
                     v = index_to_array(subgroup, i)
@@ -272,22 +272,23 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
                         if p > 2:
                             break
                     elif i <= min(np.array([np.mod(a @ v, subgroup) for a in isos]) @ strides):
-                        candidates[-1] = np.append(candidates[-1], [v], axis = 0)
+                        candidates[-1] += [v]
             vec_indices += [0]
         else:
-            result += np.ndarray.copy(np.array([candidates[i, val] for i, val in enumerate(vec_indices)]))
+            result += [np.ndarray.copy(np.array([candidates[i][val] for i, val in enumerate(vec_indices)]))]
             vec_indices[-1] += 1
     return result
 
 
 def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
-    p = primefac(subgroup[0])[0]
+    p = list(primefac(subgroup[0]))[0]
     result = np.zeros((len(candidates), len(perms), Z_wt + X_wt))
     strides = find_strides(subgroup)
     for cand_ind, cand in enumerate(candidates):
         for perm_ind, perm in enumerate(perms):
             c = np.ndarray.copy(cand[perm])
             c -= c[0]
+            c %= subgroup
             min_1 = push_to_lex_minimal(subgroup, c[1])
             result[cand_ind, perm_ind, 1] = np.sign(strides @ (min_1 - cand[1]))
             if result[cand_ind, perm_ind, 1] != 0:
@@ -298,7 +299,7 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
                 if i == 2:
                     isos = automorphisms_fixing_vectors(subgroup, c[1:i])
                 else:
-                    isos = np.array([iso for iso in isos if np.mod(iso @ c[i - 1], subgroup) == c[i - 1]])
+                    isos = np.array([iso for iso in isos if (np.mod(iso @ c[i - 1], subgroup) == c[i - 1]).all()])
                 values = np.array([np.mod(iso @ c[i], subgroup) for iso in isos])
                 if i == Z_wt:
                     values %= (2 - (p % 2))
@@ -306,6 +307,9 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
                 if result[cand_ind, perm_ind, i] != 0:
                     result[cand_ind, perm_ind, i + 1:] = result[cand_ind, perm_ind, i]
                     break
+                if i == Z_wt:
+                    c[i:] -= c[i] - cand[i]
+                    c %= subgroup
     return result
 
 
@@ -326,14 +330,13 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
           adds the k, the logical dimension of the code, to the tuple.
     """
     #find prime blocks
-    blocks = np.array([])
+    blocks = []
     for power in group:
-        if len(blocks) == 0 or primefac(power)[0] != primefac(blocks[-1, 0])[0]:
-            blocks = np.append(blocks, [[power]], axis = 0)
+        if len(blocks) == 0 or list(primefac(power))[0] != list(primefac(blocks[-1][0]))[0]:
+            blocks += [[power]]
         else:
-            blocks[-1] = np.append(blocks[-1], [power], axis = 0)
-    
-    perms = [list(i) for i in it.permutations(range(Z_wt + X_wt)) if max(i[:Z_wt]) == Z_wt]
+            blocks[-1] += [power]
+    perms = [list(i) for i in it.permutations(range(Z_wt + X_wt)) if max(i[:Z_wt]) == Z_wt - 1]
     subcodes = [minimal_strings_for_subgroup(Z_wt, X_wt, block) for block in blocks]
     subsigns = [permutation_bins(Z_wt, X_wt, block, perms, subcodes[i]) for i, block in enumerate(blocks)]
     codes = [([[] for _ in range(Z_wt + X_wt)], np.zeros((len(perms), Z_wt + X_wt)))]
@@ -342,7 +345,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
         for code in codes:
             for code2_ind, code2 in enumerate(subcodes[i]):
                 f = lambda x, y: y if x == 0 else x
-                new_signs = np.array([[f(code[1][j, k], subsigns[code2_ind][j, k])
+                new_signs = np.array([[f(code[1][j, k], subsigns[i][code2_ind][j, k])
                                        for k in range(Z_wt + X_wt)] for j in range(len(perms))])
                 if min(new_signs[:, 0]) >= 0:
                     new_codes += [(np.append(code[0], code2, axis = 1), new_signs)]

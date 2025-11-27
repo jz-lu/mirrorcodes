@@ -1,4 +1,5 @@
 from itertools import product, combinations
+import numpy as np
 
 # ---------- Basic helpers ----------
 
@@ -90,7 +91,7 @@ def lex_minimal_vectors(prime_powers):
             rec(0, None, None, [])
 
     # Return as a sorted list in lexicographic order
-    return sorted(vectors)
+    return [list(v) for v in sorted(vectors)]
 
 
 # ---------- 2) Automorphisms fixing given vectors ----------
@@ -179,7 +180,7 @@ def automorphisms_fixing_vectors(prime_powers, fixed_vectors):
         Each returned matrix A is an automorphism of the group and
         satisfies A*v = v for every v in `fixed_vectors`.
     """
-    if not fixed_vectors:
+    if len(fixed_vectors) == 0:
         raise ValueError("fixed_vectors must be non-empty.")
 
     p, lambdas = group_type_from_prime_powers(prime_powers)
@@ -250,29 +251,8 @@ def automorphisms_fixing_vectors(prime_powers, fixed_vectors):
                       new_rows_mod_p)
 
     backtrack(0, [], [])
-    return automorphisms
+    return np.array(automorphisms)
 
-
-# ---------- (Optional) tiny example usage ----------
-
-if __name__ == "__main__":
-    # Example: G = C_2 ⊕ C_4 ⊕ C_8
-    G = [2, 4, 8]
-
-    print("Lex-minimal representatives:")
-    for v in lex_minimal_vectors(G):
-        print(v)
-
-    # All automorphisms (only fixing 0)
-    autos_all = automorphisms_fixing_vectors(G, [(0, 0, 0)])
-    print(f"\nNumber of automorphisms of C2 × C4 × C8: {len(autos_all)}")
-
-    # Automorphisms that fix a nonzero element, e.g. (0,0,1)
-    autos_fix = automorphisms_fixing_vectors(G, [(0, 0, 1)])
-    print(f"Automorphisms fixing (0,0,1): {len(autos_fix)}")
-
-
-from itertools import product
 
 # ---------- Small helpers for the pushing algorithm ----------
 

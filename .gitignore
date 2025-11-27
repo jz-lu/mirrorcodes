@@ -7,3 +7,4 @@ err/
 core.*
 *.swp
 *.pkl
+/.vscode/

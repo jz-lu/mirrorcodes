@@ -112,9 +112,9 @@ def index_to_array(group, index):
         * A number array with the same length as group, corresponding to the indexth
         array mod group.
     """
-    result = np.array([])
+    result = []
     for g in group[::-1]:
-        result += [index % g]
+        result += [int(index % g)]
         index //= g
     return result[::-1]
 
