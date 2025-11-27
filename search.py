@@ -28,7 +28,7 @@ from primefac import primefac
 
 from distance import distance
 from isomorphism import automorphisms_fixing_vectors, lex_minimal_vectors, push_to_lex_minimal
-from mirror import canonicalize, find_stabilizers, is_X_canonical, is_Z_canonical, MirrorCode
+from mirror import find_stabilizers, MirrorCode
 from util import binary_rank, compute_rank_from_tuples, find_isos, find_strides, \
                  gcd, index_to_array, partitions
 
@@ -237,224 +237,6 @@ def process_codes(n, Z_wt, X_wt, index_start = 0, index_end = None):
     return COUNTER
 
 
-def decomposed_Z0_candidates(Z_wt, size):
-    """
-    Finds possible elements of Z0[:, k] that are worth searching over for some k.
-
-    Params:
-        * Z_wt (int): The number of terms in Z0
-        * size (int): The size of the cyclic group we are finding candidates for
-    
-    Returns:
-        * List of tuples. Each tuple contains a list of entries of Z0[:, k] and
-          the gcd mod size of the elements and the array size, needed for computing
-          the list of isomorphisms that leaves them invariant.
-    """
-    #compute possible indices. first is always 0, second is always a divisor, etc
-    candidates = [[0] for _ in range(Z_wt)]
-    candidates[1] = [i for i in range(size) if i == 0 or size % i == 0]
-    for i in range(2, Z_wt):
-        candidates[i] = range(size)
-
-    #compute isomorphisms that leave indices unchanged
-    isos_by_gcd = [[] for _ in range(size)]
-    for i in range(1, size):
-        if size % i > 0:
-            continue
-        isos_by_gcd[i % size] = [j for j in range(1, size) 
-                                 if (j - 1) % (size / i) == 0 and gcd(j, size) == 1]
-
-    #check to make sure each candidate is minimal under isomorphisms and append
-    result = []
-    isos = find_isos(size)
-    strides = find_strides([size] * Z_wt)
-    for zs in it.product(*candidates):
-        z_list = np.array(zs)
-        if z_list @ strides == min(
-                [np.mod(z_list * i, size) @ strides for i in isos]):
-            result.append((z_list, gcd(*zs, size) % size))
-    return result
-
-
-def decomposed_X0_candidates(X_wt, size):
-    """
-    Finds possible elements of X0[:, k] that are worth searching over for some k.
-
-    Params:
-        * X_wt (int): The number of terms in X0
-        * size (int): The size of the cyclic group we are finding candidates for
-    
-    Returns:
-        * 3d array. The outer dimension is loops over all values from 0
-          to size, inclusive. Only the entries which are factors of size have any
-          elements. The second dimension is just listing candidates. The inner
-          dimension loops over the terms of X0, and thus has length X_wt.
-    """
-    #compute possible indices. first is either 0 or 1 if size is even
-    candidates = [[0] if size % 2 == 1 else [0, 1] for _ in range(X_wt)]
-    for i in range(1, X_wt):
-        candidates[i] = range(size)
-
-    #compute isomorphisms that might leave Z indices unchanged
-    isos_by_gcd = [[] for _ in range(size)]
-    for i in range(1, size + 1):
-        if size % i > 0:
-            continue
-        isos_by_gcd[i % size] = [j for j in range(1, size)
-                                 if (j - 1) % (size / i) == 0 and gcd(j, size) == 1]
-
-    #check to make sure each candidate is minimal under isomorphisms and append
-    result = [[] for _ in range(size + 1)]
-    strides = find_strides([size] * X_wt)
-    for i in range(size):
-        if len(isos_by_gcd[i]) == 0:
-            continue
-        for xs in it.product(*candidates):
-            x_list = np.array(xs)
-            if x_list @ strides == min(
-                    [np.mod(x_list * j, size) @ strides for j in isos_by_gcd[i]]):
-                result[i].append(x_list)
-    return result
-
-
-def build_Z0_candidates(Z_wt, group, min_k = 3):
-    """
-    Finds possible tuples Z0 that are worth searching over.
-
-    Params:
-        * Z_wt (int): The number of terms in Z0
-        * group (np.ndarray): The group whose codes we are finding
-        * min_k (int, optional): Whether codes should be filtered to exclude those with k < min_k
-    
-    Returns:
-        * List of Z0 candidates with possible isomorphisms. Each candidate is a
-          tuple containing (Z0, isomorphisms). Each Z0 is a sorted list/tuple of
-          lists/tuples mod group. Each Z0[0] is always all zeros, and each Z0[1]
-          only contains terms which divide the group size. Each candidate
-          isomorphisms is a index of gcds for each dimension, communicating
-          potential isomorphisms which canonicalize Z0 as much as possible.
-    """
-    n = np.prod(group)
-    d = len(group)
-    
-    #compute possible indices. first is always 0, second is always a divisor, etc
-    candidates = np.zeros((Z_wt, d, 1))
-    for g, k in enumerate(group):
-        candidates[1, k] = [i for i in range(g) if i == 0 or g % i == 0]
-        for i in range(2, Z_wt):
-            candidates[i, k] = range(g)
-    candidates = [it.product(*c) for c in candidates]
-    
-    indices = find_strides(group)
-    autos = list(list_automorphisms(group))
-
-    result = []
-    for z in it.product(*candidates):
-        v = z @ indices
-        if v != sorted(v):
-            continue
-    
-
-
-    lengths = [len(c) for c in candidates]
-    #index incrementing amount for each index
-    strides = find_strides(lengths)
-    
-    gcd_strides = find_strides(group)
-
-    max_index = np.prod(lengths)
-    index_val = 0
-    result = []
-    isos = find_isos(group)
-    odd_indices = [i for i in range(d) if group[i] % 2 == 1]
-    #for each valid combination from each subgroup
-    while index_val < max_index:
-        jump = -1
-        index = index_to_tuple(lengths, index_val)
-        zs = np.zeros((Z_wt, d), dtype = int)
-        z_indices = None
-        #find first instance of an index sorted out of order...
-        for i in range(d):
-            zs[:, i] = candidates[i][index[i]][0]
-            z_indices = zs @ strides
-            if np.any(z_indices[:-1] > z_indices[1:]):
-                jump = strides[i]
-                break
-        #and increment there if it is not canonical
-        if (jump > 0 or np.any(z_indices[:-1] >= z_indices[1:])
-            or not is_Z_canonical(group, zs, isos)
-            or (min_k and (not np.any(zs[:, odd_indices])
-                or compute_rank_from_tuples(group, zs) > n - min_k))):
-            jump = max(jump, 1)
-            index_val = (index_val // jump + 1) * jump
-            continue
-        #otherwise, write down the code and the gcds
-        result.append((zs, int(np.array([candidates[i][index[i]][1]
-                                         for i in range(d)]) @ gcd_strides)))
-        index_val += 1
-    return result
-
-
-def build_X0_candidates(X_wt, group, min_k = 3):
-    """
-    Finds possible tuples X0 that are worth searching over. Split up by the gcd of
-    the Zs, which defines isomorphisms under which the Xs are minimal.
-
-    Params:
-        * X_wt (int): The number of terms in X0
-        * group (np.ndarray): The group whose codes we are finding
-        * min_k (int, optional): Whether codes should be filtered to exclude those with k < min_k
-    
-    Returns:
-        * List of lists of X0 candidates. The outer list is indexed by the gcd's of
-          the Zs which determine the isomorphisms under which the Zs are equivalent,
-          meaning we must minimize the Xs over this set. Each X0 is a sorted
-          list/tuple of lists/tuples mod group. Each X0[0] is always all 0 or 1.
-    """
-    n = np.prod(group)
-    d = len(group)
-    candidates = [decomposed_X0_candidates(X_wt, i) for i in group]
-    result = [[] for i in range(n)]
-    for i in range(n):
-        gcds = index_to_tuple(group, i)
-        lengths = [len(candidates[j][gcds[j]]) for j in range(d)]
-        
-        #index incrementing amount for each index
-        strides = find_strides(lengths)
-        max_index = np.prod(lengths)
-        if max_index == 0:
-            continue
-        isos = [[k for k in range(1, g) if (k - 1) %
-                 (1 if gcds[j] == 0 else g / gcds[j]) == 0 and gcd(k, g) == 1]
-                for j, g in enumerate(group)]
-        odd_indices = [i for i in range(d) if group[i] % 2 == 1]
-        index_val = 0
-        #for each valid combination from each subgroup
-        while index_val < max_index:
-            jump = -1
-            index = index_to_tuple(lengths, index_val)
-            xs = np.zeros((X_wt, d), dtype = int)
-            #find first instance of an index sorted out of order...
-            for j in range(d):
-                xs[:, j] = candidates[j][gcds[j]][index[j]]
-                x_indices = xs @ strides
-                if np.any(x_indices[:-1] > x_indices[1:]):
-                    jump = strides[j]
-                    break
-            #and increment there if it is not increasing
-            if (jump > 0 or np.any(x_indices[:-1] >= x_indices[1:])
-                or not is_X_canonical(group, xs, isos)
-                or (min_k > 0 and (not np.any(xs[:, odd_indices]) or
-                                     compute_rank_from_tuples(group, xs) > n - min_k))):
-                jump = max(jump, 1)
-                index_val = (index_val // jump + 1) * jump
-                continue
-            #otherwise, write down the code
-            result[i].append(xs)
-            index_val += 1
-    return result
-
-
 def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
     p = primefac(subgroup[0])[0]
     result = np.array([])
@@ -498,43 +280,32 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
     return result
 
 
-def permutation_bins(Z_wt, X_wt, subgroup, perm, candidates):
+def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
     p = primefac(subgroup[0])[0]
-    result = []
+    result = np.zeros((len(candidates), len(perms), Z_wt + X_wt))
     strides = find_strides(subgroup)
-    for cand in candidates:
-        signs = [] #ADD TRACKING OF SIGNS. ADD IGNORING OF TRIVIAL ISOMORPHISM
-        c = np.ndarray.copy(cand[perm])
-        c -= c[0]
-        min_1 = push_to_lex_minimal(subgroup, c[1])
-        val = strides @ (min_1 - cand[1])
-        if val != 0:
-            result[0 if val < 0 else 2] += [cand]
-            continue
-        isos = []
-        for i in range(2, Z_wt + X_wt):
-            if i == 2:
-                isos = automorphisms_fixing_vectors(subgroup, c[1:i])
-            else:
-                isos = np.array([iso for iso in isos if np.mod(iso @ c[i - 1], subgroup) == c[i - 1]])
-            values = np.array([np.mod(iso @ c[i], subgroup) for iso in isos])
-            if i == Z_wt:
-                values %= (2 - (p % 2))
-            arr = values @ strides
-            minval = min(arr)
-            if minval < strides @ cand[i]:
-                LO
-            elif list(arr).count(minval) == 1:
-                diff = 2 HI
-            else:
-                diff = 1 EQ
-            diff = min(values @ strides) - strides @ cand[i]
-            if diff == 0 and 
-            if diff != 0:
-                result[0 if diff < 0 else 2] = np.append(result[0 if diff < 0 else 2], [cand], axis = 0)
-                break
-            elif i == Z_wt + X_wt - 1:
-                result[1] = np.append(result[1], [cand], axis = 0)
+    for cand_ind, cand in enumerate(candidates):
+        for perm_ind, perm in enumerate(perms):
+            c = np.ndarray.copy(cand[perm])
+            c -= c[0]
+            min_1 = push_to_lex_minimal(subgroup, c[1])
+            result[cand_ind, perm_ind, 1] = np.sign(strides @ (min_1 - cand[1]))
+            if result[cand_ind, perm_ind, 1] != 0:
+                result[cand_ind, perm_ind, 2:] = result[cand_ind, perm_ind, 1]
+                continue
+            isos = []
+            for i in range(2, Z_wt + X_wt):
+                if i == 2:
+                    isos = automorphisms_fixing_vectors(subgroup, c[1:i])
+                else:
+                    isos = np.array([iso for iso in isos if np.mod(iso @ c[i - 1], subgroup) == c[i - 1]])
+                values = np.array([np.mod(iso @ c[i], subgroup) for iso in isos])
+                if i == Z_wt:
+                    values %= (2 - (p % 2))
+                result[cand_ind, perm_ind, i] = np.sign(min(values @ strides) - strides @ cand[i])
+                if result[cand_ind, perm_ind, i] != 0:
+                    result[cand_ind, perm_ind, i + 1:] = result[cand_ind, perm_ind, i]
+                    break
     return result
 
 
@@ -554,10 +325,6 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
           X0 is a list/tuple of lists/tuples mod group. If return_k is true, also
           adds the k, the logical dimension of the code, to the tuple.
     """
-
-    n = np.prod(group)
-    d = len(group)
-
     #find prime blocks
     blocks = np.array([])
     for power in group:
@@ -566,46 +333,23 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
         else:
             blocks[-1] = np.append(blocks[-1], [power], axis = 0)
     
-    candidates = [minimal_strings_for_subgroup(Z_wt, X_wt, block) for block in blocks]
-    
-
-    
-    #compute possible indices. first is always 0, second is always a divisor, etc
-    Z_candidates = np.zeros((Z_wt, d, 1))
-    for g, k in enumerate(group):
-        Z_candidates[1, k] = [i for i in range(g) if i == 0 or g % i == 0]
-        for i in range(2, Z_wt):
-            Z_candidates[i, k] = range(g)
-    Z_candidates = [it.product(*c) for c in Z_candidates]
-    
-    indices = find_strides(group)
-    autos = list(list_automorphisms(group))
-
-    result = []
-    for z in it.product(*Z_candidates):
-        v = z @ indices
-        if v != sorted(v):
-            continue
-        minrep = z
-        for p in it.permutations(z):
-            prod = np.tensordot(autos, p, axes = ([2], [1]))
-            
-
-
-
-    n = np.prod(group)
-    zs = build_Z0_candidates(Z_wt, group)
-    xs = build_X0_candidates(X_wt, group)
-    codes = []
-    for i in zs:
-        for j in xs:
-            code = MirrorCode(group, i, j, n = n)
-            if min_k > 0 and code.get_k() < min_k:
-                continue
-            canon_Z, canon_X = canonicalize(group, i, j)
-            if np.all(i == canon_Z) and np.all(j == canon_X):
-                codes.append((group, i, j, code.is_CSS()) + ((code.get_k(),) if return_k else ()))
-    return codes
+    perms = [list(i) for i in it.permutations(range(Z_wt + X_wt)) if max(i[:Z_wt]) == Z_wt]
+    subcodes = [minimal_strings_for_subgroup(Z_wt, X_wt, block) for block in blocks]
+    subsigns = [permutation_bins(Z_wt, X_wt, block, perms, subcodes[i]) for i, block in enumerate(blocks)]
+    codes = [([[] for _ in range(Z_wt + X_wt)], np.zeros((len(perms), Z_wt + X_wt)))]
+    for i in range(len(blocks)):
+        new_codes = []
+        for code in codes:
+            for code2_ind, code2 in enumerate(subcodes[i]):
+                f = lambda x, y: y if x == 0 else x
+                new_signs = np.array([[f(code[1][j, k], subsigns[code2_ind][j, k])
+                                       for k in range(Z_wt + X_wt)] for j in range(len(perms))])
+                if min(new_signs[:, 0]) >= 0:
+                    new_codes += [(np.append(code[0], code2, axis = 1), new_signs)]
+        codes = new_codes
+    twos = find_strides([2] * (Z_wt + X_wt))
+    codes = [MirrorCode(group, code[0][:Z_wt], code[0][Z_wt:]) for code in codes if min(code[1] @ twos) >= 0]
+    return [(group, code.z0, code.x0, code.is_CSS()) + ((code.get_k(),) if return_k else ()) for code in codes]
 
 
 def find_all_codes(n, Z_wt, X_wt, min_k = 3):
