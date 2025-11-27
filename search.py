@@ -351,7 +351,8 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
                     new_codes += [(np.append(code[0], code2, axis = 1), new_signs)]
         codes = new_codes
     twos = find_strides([2] * (Z_wt + X_wt))
-    codes = [MirrorCode(group, code[0][:Z_wt], code[0][Z_wt:]) for code in codes if min(code[1] @ twos) >= 0]
+    codes = [MirrorCode(group, code[0][:Z_wt], code[0][Z_wt:]) for code in codes if
+             min(code[1] @ twos) >= 0 and len(np.unique(code[0][:Z_wt])) == Z_wt and len(np.unique(code[0][Z_wt:])) == X_wt]
     return [(group, code.z0, code.x0, code.is_CSS()) + ((code.get_k(),) if return_k else ()) for code in codes]
 
 
