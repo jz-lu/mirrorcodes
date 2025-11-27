@@ -519,8 +519,17 @@ def permutation_bins(Z_wt, X_wt, subgroup, perm, candidates):
                 isos = np.array([iso for iso in isos if np.mod(iso @ c[i - 1], subgroup) == c[i - 1]])
             values = np.array([np.mod(iso @ c[i], subgroup) for iso in isos])
             if i == Z_wt:
-                values %= 2 if p == 2 else 1
+                values %= (2 - (p % 2))
+            arr = values @ strides
+            minval = min(arr)
+            if minval < strides @ cand[i]:
+                LO
+            elif list(arr).count(minval) == 1:
+                diff = 2 HI
+            else:
+                diff = 1 EQ
             diff = min(values @ strides) - strides @ cand[i]
+            if diff == 0 and 
             if diff != 0:
                 result[0 if diff < 0 else 2] = np.append(result[0 if diff < 0 else 2], [cand], axis = 0)
                 break
