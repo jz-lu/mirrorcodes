@@ -280,17 +280,18 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
             c = np.ndarray.copy(cand[perm])
             c -= c[0]
             c %= subgroup
-            min_1 = push_to_lex_minimal(subgroup, c[1])
-            result[cand_ind, perm_ind, 1] = np.sign(strides @ (min_1 - cand[1]))
+            min_1, min_auto = push_to_lex_minimal(subgroup, c[1])
+            c = (min_auto @ c.T).T
+            result[cand_ind, perm_ind, 1] = np.sign(strides @ (c[1] - cand[1]))
             if result[cand_ind, perm_ind, 1] != 0:
                 result[cand_ind, perm_ind, 2:] = result[cand_ind, perm_ind, 1]
                 continue
             isos = []
             for i in range(2, Z_wt + X_wt):
                 if i == 2:
-                    isos = automorphisms_fixing_vectors(subgroup, c[1:i])
+                    isos = automorphisms_fixing_vectors(subgroup, cand[1:i])
                 else:
-                    isos = np.array([iso for iso in isos if (np.mod(iso @ c[i - 1], subgroup) == c[i - 1]).all()])
+                    isos = np.array([iso for iso in isos if (np.mod(iso @ cand[i - 1], subgroup) == cand[i - 1]).all()])
                 values = np.array([np.mod(iso @ c[i], subgroup) for iso in isos])
                 if i == Z_wt:
                     values %= (2 - (p % 2))
@@ -327,7 +328,8 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
             blocks += [[power]]
         else:
             blocks[-1] += [power]
-    perms = [list(i) for i in it.permutations(range(Z_wt + X_wt)) if max(i[:Z_wt]) == Z_wt - 1]
+    perms = [list(i) for i in it.permutations(range(Z_wt + X_wt)) if max(i[:Z_wt]) == Z_wt - 1
+             or (Z_wt != X_wt or min(i[:Z_wt]) == Z_wt)]
     subcodes = [minimal_strings_for_subgroup(Z_wt, X_wt, block) for block in blocks]
     subsigns = [permutation_bins(Z_wt, X_wt, block, perms, subcodes[i]) for i, block in enumerate(blocks)]
     codes = [([[] for _ in range(Z_wt + X_wt)], np.zeros((len(perms), Z_wt + X_wt)))]
@@ -344,7 +346,8 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
     twos = find_strides([2] * (Z_wt + X_wt))
     codes = [MirrorCode(group, code[0][:Z_wt], code[0][Z_wt:]) for code in codes if
              min(code[1] @ twos) >= 0 and len(np.unique(code[0][:Z_wt], axis = 0)) == Z_wt and len(np.unique(code[0][Z_wt:], axis = 0)) == X_wt]
-    return [(group, code.z0, code.x0, code.is_CSS()) + ((code.get_k(),) if return_k else ()) for code in codes]
+    return [(group, code.z0, code.x0, code.is_CSS()) + ((code.get_k(),) if return_k else ()) for code in codes
+            if code.get_k() >= min_k]
 
 
 def find_all_codes(n, Z_wt, X_wt, min_k = 3):
@@ -381,9 +384,8 @@ def find_all_codes(n, Z_wt, X_wt, min_k = 3):
 
 
 def main():
-    # for i in range(32):
-    #     print(i, len(find_all_codes(i, 3, 3)))
-    print(np.array([np.array([code[1], code[2]], dtype=int) for code in find_all_codes(6, 3, 3)]))
+    for i in range(32):
+        print(i, len(find_all_codes(i, 3, 3)))
 
 
 if __name__ == "__main__":

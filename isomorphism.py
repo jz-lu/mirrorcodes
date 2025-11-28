@@ -379,7 +379,9 @@ def push_to_lex_minimal(prime_powers, v):
     - v           : iterable of ints, length r.
 
     Returns:
-        list of rows (each a list of ints), the automorphism matrix.
+        (w, A)
+        w : tuple, the lexicographically minimal representative in the orbit of v.
+        A : list of rows (each a list of ints), the automorphism matrix.
     """
     p, lambdas = group_type_from_prime_powers(prime_powers)
     r = len(lambdas)
@@ -392,7 +394,8 @@ def push_to_lex_minimal(prime_powers, v):
 
     # Zero is fixed by every automorphism; it's already lex-minimal.
     if all(x == 0 for x in v_norm):
-        return v_norm
+        A = [[int(i == j) for j in range(r)] for i in range(r)]
+        return v_norm, A
 
     # Order is an invariant under automorphisms, so only consider candidates with same order.
     ord_v = element_order_p_group(prime_powers, v_norm)
@@ -407,7 +410,7 @@ def push_to_lex_minimal(prime_powers, v):
 
         A = _automorphism_sending_vector(prime_powers, v_norm, w)
         if A is not None:
-            return w
+            return w, A
 
     # Theoretically this should never happen if everything is coded correctly.
     raise RuntimeError("No automorphism found mapping v to a lex-minimal representative.")
