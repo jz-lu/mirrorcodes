@@ -250,15 +250,6 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
             vec_indices = vec_indices[:-2] + [vec_indices[-2] + 1]
             candidates = candidates[:-1]
             continue
-        Z_vals = np.array([candidates[i][val] for i, val in enumerate(vec_indices[:min(len(vec_indices), Z_wt)])]) @ strides
-        if len(set(Z_vals)) < len(Z_vals):
-            vec_indices[-1] += 1
-            continue
-        if len(vec_indices) > Z_wt:
-            X_vals = np.array([candidates[i + Z_wt][val] for i, val in enumerate(vec_indices[Z_wt:len(vec_indices)])]) @ strides
-            if len(set(X_vals)) < len(X_vals):
-                vec_indices[-1] += 1
-                continue
         if len(vec_indices) < Z_wt + X_wt:
             if len(vec_indices) == 1:
                 candidates += [lex_minimal_vectors(subgroup)]
@@ -352,7 +343,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
         codes = new_codes
     twos = find_strides([2] * (Z_wt + X_wt))
     codes = [MirrorCode(group, code[0][:Z_wt], code[0][Z_wt:]) for code in codes if
-             min(code[1] @ twos) >= 0 and len(np.unique(code[0][:Z_wt])) == Z_wt and len(np.unique(code[0][Z_wt:])) == X_wt]
+             min(code[1] @ twos) >= 0 and len(np.unique(code[0][:Z_wt], axis = 0)) == Z_wt and len(np.unique(code[0][Z_wt:], axis = 0)) == X_wt]
     return [(group, code.z0, code.x0, code.is_CSS()) + ((code.get_k(),) if return_k else ()) for code in codes]
 
 
@@ -390,8 +381,9 @@ def find_all_codes(n, Z_wt, X_wt, min_k = 3):
 
 
 def main():
-    for i in range(32):
-        print(i, len(find_all_codes(i, 3, 3)))
+    # for i in range(32):
+    #     print(i, len(find_all_codes(i, 3, 3)))
+    print(np.array([np.array([code[1], code[2]], dtype=int) for code in find_all_codes(6, 3, 3)]))
 
 
 if __name__ == "__main__":
