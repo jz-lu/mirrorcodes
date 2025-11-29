@@ -33,8 +33,8 @@ def _get_perms(Z_wt: int, X_wt: int):
     perms = []
     for perm in it.permutations(range(total)):
         if max(perm[:Z_wt]) == Z_wt - 1 or (Z_wt != X_wt or min(perm[:Z_wt]) == Z_wt):
-            perms.append(perm)
-    return tuple(tuple(p) for p in perms)
+            perms.append(tuple(perm))
+    return tuple(perms)
 
 
 @lru_cache(maxsize=None)
@@ -162,7 +162,7 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
 
 
 # ============================================================
-# 3) Permutation bins
+# 3) Permutation bins (optimized)
 # ============================================================
 
 def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
@@ -189,9 +189,25 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
     for cand_ind, cand in enumerate(candidates):
         cand = np.asarray(cand, dtype=int)
 
+        # Precompute automorphisms that fix prefixes of cand:
+        # isos_by_prefix[i] = automorphisms that fix cand[1],...,cand[i-1]
+        isos_by_prefix = [None] * total
+        if total > 2:
+            fixed1 = (tuple(int(x) for x in cand[1]),)
+            isos_current = automorphisms_fixing_vectors(p, lambdas, fixed1)
+            isos_by_prefix[2] = isos_current
+            for i in range(3, total):
+                if isos_current.size > 1:
+                    v_prev = cand[i - 1]
+                    images_prev = (isos_current @ v_prev) % subgroup_np
+                    mask = (images_prev == v_prev).all(axis=1)
+                    isos_current = isos_current[mask]
+                isos_by_prefix[i] = isos_current
+
         for perm_ind, perm in enumerate(perms):
-            # Reorder and normalise
-            c = cand[list(perm)] - cand[perm[0]]
+            perm = list(perm)
+
+            c = cand[perm] - cand[perm[0]]
             if p == 2:
                 offset = c[Z_wt] - (c[Z_wt] % 2)
                 c[Z_wt:] -= offset
@@ -202,7 +218,7 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
             A_np = np.array(A, dtype=int)
             c = (A_np @ c.T).T % subgroup_np
 
-            # Compare first non-fixed coordinate (index 1)
+            # Compare first non-fixed coordinate
             d1 = int(strides @ (c[1] - cand[1]))
             if d1 > 0:
                 s1 = 1
@@ -214,18 +230,12 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
             if s1 != 0:
                 continue
 
-            # Automorphisms fixing cand[1]
-            fixed = (tuple(int(x) for x in cand[1]),)
-            isos = automorphisms_fixing_vectors(p, lambdas, fixed)
-
+            # Compare positions 2,3,... using precomputed automorphisms
             for i in range(2, total):
-                if isos.size > 1 and i > 2:
-                    v_prev = cand[i - 1]
-                    images_prev = (isos @ v_prev) % subgroup_np
-                    mask = (images_prev == v_prev).all(axis=1)
-                    isos = isos[mask]
-                    if isos.size == 0:
-                        break
+                isos = isos_by_prefix[i] if total > 2 else None
+                if isos is None or isos.size == 0:
+                    # no additional constraint => sign stays 0
+                    break
 
                 images = (isos @ c[i]) % subgroup_np
                 lex_vals = images @ strides
@@ -247,7 +257,24 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
 
 
 # ============================================================
-# 4) Find all codes in a given abelian group
+# 4) Cached subgroup data: codes + permutation bins
+# ============================================================
+
+@lru_cache(maxsize=None)
+def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block):
+    """
+    Cache both the minimal strings and the permutation bins for a given
+    (Z_wt, X_wt, block). block must be a tuple of prime powers.
+    """
+    block = tuple(block)
+    perms = _get_perms(Z_wt, X_wt)
+    codes_block = minimal_strings_for_subgroup(Z_wt, X_wt, block)
+    subsigns_block = permutation_bins(Z_wt, X_wt, block, perms, codes_block)
+    return codes_block, subsigns_block
+
+
+# ============================================================
+# 5) Find all codes in a given abelian group
 # ============================================================
 
 def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
@@ -277,33 +304,22 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
             i += 1
         blocks.append(tuple(block))
 
-    perms = _get_perms(Z_wt, X_wt)
-    num_perms = len(perms)
+    # Combine blocks incrementally
+    codes = []
+    codes_initialized = False
 
-    # For each block, compute minimal strings and permutation signatures
-    subcodes = []
-    subsigns = []
     for block in blocks:
-        codes_block = minimal_strings_for_subgroup(Z_wt, X_wt, block)
-        if not codes_block:
-            return []
-        subcodes.append(codes_block)
-        subsigns.append(permutation_bins(Z_wt, X_wt, block, perms, codes_block))
+        codes_block, signs_block = _subgroup_codes_and_bins(Z_wt, X_wt, block)
 
-    # Combine blocks
-    # Each entry: (code_vectors, sign_matrix)
-    #   code_vectors: np.array shape (total, num_coords_so_far)
-    #   sign_matrix : np.int8 array shape (num_perms, total)
-    codes = [
-        (np.zeros((total, 0), dtype=int),
-         np.zeros((num_perms, total), dtype=np.int8))
-    ]
+        if not codes_initialized:
+            num_perms = signs_block.shape[1]
+            codes = [
+                (np.zeros((total, 0), dtype=int),
+                 np.zeros((num_perms, total), dtype=np.int8))
+            ]
+            codes_initialized = True
 
-    for block_idx, block in enumerate(blocks):
-        codes_block = subcodes[block_idx]
-        signs_block = subsigns[block_idx]
         new_codes = []
-
         for vecs, signs in codes:
             for code2_ind, code2 in enumerate(codes_block):
                 block_signs = signs_block[code2_ind]
@@ -355,7 +371,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
 
 
 # ============================================================
-# 5) Top-level search over all groups of size n
+# 6) Top-level search over all groups of size n
 # ============================================================
 
 def find_all_codes(n, Z_wt, X_wt, min_k=3):
@@ -384,11 +400,11 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
 
 
 # ============================================================
-# 6) Main
+# 7) Main
 # ============================================================
 
 def main():
-    for i in range(25):
+    for i in range(32):
         print(i, len(find_all_codes(i, 3, 3)))
 
 

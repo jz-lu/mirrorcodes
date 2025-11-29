@@ -131,6 +131,7 @@ def lex_minimal_vectors(p: int, lambdas: tuple[int, ...]):
 # 2) Automorphisms fixing given vectors (p-group)
 # ============================================================
 
+@lru_cache(maxsize=None)
 def automorphisms_fixing_vectors(
     p: int,
     lambdas: tuple[int, ...],
