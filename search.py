@@ -5,6 +5,8 @@ Search for good mirror codes.
 
 import itertools as it
 from functools import lru_cache
+import os
+import pickle
 
 import numpy as np
 from primefac import primefac
@@ -162,13 +164,19 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
 
 
 # ============================================================
-# 3) Permutation bins (optimized)
+# 3) Permutation bins (optimized, no pruning)
 # ============================================================
 
 def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
     """
     For each candidate code on a prime-power subgroup and each permutation,
     compute sign information used to glue blocks.
+
+    Semantics match the original implementation:
+      - For each candidate and permutation, build c, normalise X-part,
+        push c[1] to lex-minimal via an automorphism, then compare
+        lex positions of c[i] vs cand[i] under automorphisms fixing
+        earlier coordinates.
     """
     subgroup = tuple(subgroup)
     factors = [list(primefac(s)) for s in subgroup]
@@ -184,6 +192,7 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
     if num_cands == 0 or num_perms == 0:
         return np.zeros((num_cands, num_perms, total), dtype=np.int8)
 
+    perms_np = np.array(perms, dtype=int)
     result = np.zeros((num_cands, num_perms, total), dtype=np.int8)
 
     for cand_ind, cand in enumerate(candidates):
@@ -204,21 +213,24 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
                     isos_current = isos_current[mask]
                 isos_by_prefix[i] = isos_current
 
-        for perm_ind, perm in enumerate(perms):
-            perm = list(perm)
+        for perm_ind in range(num_perms):
+            perm = perms_np[perm_ind]
 
+            # Reorder and normalise
             c = cand[perm] - cand[perm[0]]
+
             if p == 2:
                 offset = c[Z_wt] - (c[Z_wt] % 2)
                 c[Z_wt:] -= offset
             else:
                 c[Z_wt:] -= c[Z_wt]
 
+            # Push c[1] to lex-minimal and apply automorphism to all rows
             A = push_to_lex_minimal(p, lambdas, tuple(int(x) for x in c[1]))
             A_np = np.array(A, dtype=int)
             c = (A_np @ c.T).T % subgroup_np
 
-            # Compare first non-fixed coordinate
+            # Compare position 1
             d1 = int(strides @ (c[1] - cand[1]))
             if d1 > 0:
                 s1 = 1
@@ -230,15 +242,15 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
             if s1 != 0:
                 continue
 
-            # Compare positions 2,3,... using precomputed automorphisms
+            # Compare positions 2,3,... until a sign is determined
             for i in range(2, total):
                 isos = isos_by_prefix[i] if total > 2 else None
                 if isos is None or isos.size == 0:
-                    # no additional constraint => sign stays 0
+                    # No further restrictions ⇒ sign stays 0
                     break
 
-                images = (isos @ c[i]) % subgroup_np
-                lex_vals = images @ strides
+                images = (isos @ c[i]) % subgroup_np   # (#isos, r)
+                lex_vals = images @ strides            # (#isos,)
                 base = int(strides @ cand[i])
                 diff = int(lex_vals.min()) - base
 
@@ -257,7 +269,7 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
 
 
 # ============================================================
-# 4) Cached subgroup data: codes + permutation bins
+# 4) Cached subgroup data: codes + permutation bins, with disk storage
 # ============================================================
 
 @lru_cache(maxsize=None)
@@ -265,11 +277,48 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block):
     """
     Cache both the minimal strings and the permutation bins for a given
     (Z_wt, X_wt, block). block must be a tuple of prime powers.
+
+    This function also provides a persistent on-disk cache in the folder
+    'subgroups', using a filename based on (Z_wt, X_wt, p, exponents),
+    where block = (p**λ1, ..., p**λr).
     """
     block = tuple(block)
+
+    # Extract prime and exponents (since each block is a single prime power tower)
+    first = block[0]
+    # prime p
+    p = list(primefac(first))[0]
+    # exponents λ_i such that block[i] = p**λ_i
+    lambdas = []
+    for n in block:
+        m = n
+        e = 0
+        while m % p == 0:
+            m //= p
+            e += 1
+        lambdas.append(e)
+    exps_str = "_".join(str(e) for e in lambdas)
+
+    # Ensure directory exists
+    os.makedirs("subgroups", exist_ok=True)
+    fname = f"Z{Z_wt}_X{X_wt}_p{p}_l{exps_str}.pkl"
+    path = os.path.join("subgroups", fname)
+
+    # If file exists, load from disk
+    if os.path.exists(path):
+        with open(path, "rb") as f:
+            data = pickle.load(f)
+        return data["codes_block"], data["subsigns_block"]
+
+    # Otherwise, compute and save
     perms = _get_perms(Z_wt, X_wt)
     codes_block = minimal_strings_for_subgroup(Z_wt, X_wt, block)
     subsigns_block = permutation_bins(Z_wt, X_wt, block, perms, codes_block)
+
+    data = {"codes_block": codes_block, "subsigns_block": subsigns_block}
+    with open(path, "wb") as f:
+        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
     return codes_block, subsigns_block
 
 
@@ -311,6 +360,9 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
     for block in blocks:
         codes_block, signs_block = _subgroup_codes_and_bins(Z_wt, X_wt, block)
 
+        if not codes_block:
+            return []
+
         if not codes_initialized:
             num_perms = signs_block.shape[1]
             codes = [
@@ -326,6 +378,8 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
                 new_signs = signs.copy()
                 mask = (new_signs == 0)
                 new_signs[mask] = block_signs[mask]
+                # Column 0 is always 0 in the original scheme, so this is kept
+                # for structural compatibility (no effect in practice).
                 if new_signs[:, 0].min() >= 0:
                     combined_vecs = np.concatenate((vecs, code2), axis=1)
                     new_codes.append((combined_vecs, new_signs))
