@@ -26,33 +26,10 @@ import itertools as it
 import numpy as np
 from primefac import primefac
 
-from isomorphism import automorphisms_fixing_vectors, lex_minimal_vectors, push_to_lex_minimal
+from isomorphism import automorphisms_fixing_vectors, is_single_equivalence_class_under_shifts, \
+    lex_minimal_vectors, push_to_lex_minimal
 from mirror import MirrorCode
 from util import find_strides, index_to_array, partitions
-
-
-def num_indices(n, Z_wt, X_wt):
-    """
-    Compute number of possible codes on n qubits with given weights. This does not
-    assume any canonicalization whatsoever, other than setting Z0[0] to 0. This
-    function exists to have nice ranges over which to index. This returns the
-    number of partitions of the powers of n times n to the power of Z_wt + X_wt - 1.
-
-    Params:
-        * n (int): The number of qubits we want to search over
-        * Z_wt (int): The number of terms in Z0
-        * X_wt (int): The number of terms in X0
-    
-    Returns:
-        * An int with the number of possible codes on n qubits. Calculates the
-        number of partitions of the powers of n times number of ways to pick
-        qubits in Z0 and X0, not counting Z0[0].
-    """
-    result = 1
-    #find all the powers of primes in n, and count how many partitions they have
-    for i in it.groupby(list(primefac(n))):
-        result *= len(list(partitions(len(list(i[1])))))
-    return result * n ** (Z_wt + X_wt - 1)
 
 
 def n_partitions(n):
@@ -87,17 +64,18 @@ def n_partitions(n):
             for k in j:
                 group_sizes.append(p ** k)
         result.append((*group_sizes,))
-    
     return result
 
 
 def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
-    p = list(primefac(subgroup[0]))[0]
+    factors = [list(primefac(s)) for s in subgroup]
+    p = factors[0][0]
+    powers = [len(size) for size in factors]
     result = []
     candidates = [[[0] * len(subgroup)]]
     vec_indices = [0]
     strides = find_strides(subgroup)
-    lex_min = lex_minimal_vectors(subgroup)
+    lex_min = lex_minimal_vectors(p, powers)
     while True:
         if vec_indices[-1] >= len(candidates[-1]):
             if len(vec_indices) == 1:
@@ -110,7 +88,7 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
                 candidates += [lex_min]
             else:
                 candidates += [[]]
-                isos = automorphisms_fixing_vectors(subgroup, [candidates[i][val] for i, val in enumerate(vec_indices)])
+                isos = automorphisms_fixing_vectors(p, powers, [candidates[i][val] for i, val in enumerate(vec_indices)])
                 for i in range(np.prod(subgroup)):
                     v = index_to_array(subgroup, i)
                     if len(vec_indices) == Z_wt and max(v) > (1 if p == 2 else 0):
@@ -122,28 +100,29 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
         else:
             result += [np.ndarray.copy(np.array([candidates[i][val] for i, val in enumerate(vec_indices)], dtype = int))]
             vec_indices[-1] += 1
-    return result
+    return [code for code in result if is_single_equivalence_class_under_shifts(Z_wt, X_wt, subgroup, code)]
 
 
 def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
-    p = list(primefac(subgroup[0]))[0]
+    factors = [list(primefac(s)) for s in subgroup]
+    p = factors[0][0]
+    powers = [len(size) for size in factors]
     result = np.zeros((len(candidates), len(perms), Z_wt + X_wt))
     strides = find_strides(subgroup)
     for cand_ind, cand in enumerate(candidates):
         for perm_ind, perm in enumerate(perms):
-            c = np.ndarray.copy(cand[perm] - cand[perm[0]])
+            c = cand[perm] - cand[perm[0]]
             c[Z_wt:] -= c[Z_wt] - (c[Z_wt] % (2 if p == 2 else 1))
             c %= subgroup
-            c = (push_to_lex_minimal(subgroup, c[1]) @ c.T).T % subgroup
+            c = (push_to_lex_minimal(p, powers, c[1]) @ c.T).T % subgroup
             result[cand_ind, perm_ind, 1:] = np.sign(strides @ (c[1] - cand[1]))
             if result[cand_ind, perm_ind, 1] != 0:
                 continue
-            isos = automorphisms_fixing_vectors(subgroup, cand[1:2])
+            isos = automorphisms_fixing_vectors(p, powers, cand[1:2])
             for i in range(2, Z_wt + X_wt):
-                if i > 2:
+                if i > 2 and len(isos) > 1:
                     isos = np.array([iso for iso in isos if (np.mod(iso @ cand[i - 1], subgroup) == cand[i - 1]).all()])
-                values = np.array([np.mod(iso @ c[i], subgroup) for iso in isos])
-                sign = np.sign(min(values @ strides) - strides @ cand[i])
+                sign = np.sign(min([np.mod(iso @ c[i], subgroup) @ strides for iso in isos]) - strides @ cand[i])
                 result[cand_ind, perm_ind, i:] = sign
                 if sign != 0:
                     break
@@ -178,11 +157,11 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
     subcodes = [minimal_strings_for_subgroup(Z_wt, X_wt, block) for block in blocks]
     subsigns = [permutation_bins(Z_wt, X_wt, block, perms, subcodes[i]) for i, block in enumerate(blocks)]
     codes = [([[] for _ in range(Z_wt + X_wt)], np.zeros((len(perms), Z_wt + X_wt)))]
+    f = lambda x, y: y if x == 0 else x
     for i in range(len(blocks)):
         new_codes = []
         for code in codes:
             for code2_ind, code2 in enumerate(subcodes[i]):
-                f = lambda x, y: y if x == 0 else x
                 new_signs = np.array([[f(code[1][j, k], subsigns[i][code2_ind][j, k])
                                        for k in range(Z_wt + X_wt)] for j in range(len(perms))])
                 if min(new_signs[:, 0]) >= 0:
@@ -190,7 +169,8 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k = 3, return_k = True):
         codes = new_codes
     twos = find_strides([2] * (Z_wt + X_wt))
     codes = [MirrorCode(group, code[0][:Z_wt], code[0][Z_wt:]) for code in codes if
-             min(code[1] @ twos) >= 0 and len(np.unique(code[0][:Z_wt], axis = 0)) == Z_wt and len(np.unique(code[0][Z_wt:], axis = 0)) == X_wt]
+             min(code[1] @ twos) >= 0 and len(np.unique(code[0][:Z_wt], axis = 0)) == Z_wt
+             and len(np.unique(code[0][Z_wt:], axis = 0)) == X_wt]
     return [(group, code.z0, code.x0, code.is_CSS()) + ((code.get_k(),) if return_k else ()) for code in codes
             if code.get_k() >= min_k]
 
@@ -229,7 +209,7 @@ def find_all_codes(n, Z_wt, X_wt, min_k = 3):
 
 
 def main():
-    for i in range(32):
+    for i in range(25):
         print(i, len(find_all_codes(i, 3, 3)))
 
 
