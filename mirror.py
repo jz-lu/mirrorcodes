@@ -440,8 +440,8 @@ class MirrorCode():
     """
     def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None):
         self.group = group
-        self.z0 = z0
-        self.x0 = x0
+        self.z0 = np.array(z0, dtype = int)
+        self.x0 = np.array(x0, dtype = int)
         self.wx = len(x0)
         self.wz = len(z0)
         self.stabilizers = None

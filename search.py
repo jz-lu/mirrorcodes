@@ -266,7 +266,7 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
                         candidates[-1] += [v]
             vec_indices += [0]
         else:
-            result += [np.ndarray.copy(np.array([candidates[i][val] for i, val in enumerate(vec_indices)]))]
+            result += [np.ndarray.copy(np.array([candidates[i][val] for i, val in enumerate(vec_indices)], dtype = int))]
             vec_indices[-1] += 1
     return result
 
@@ -281,7 +281,7 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
             c -= c[0]
             c %= subgroup
             min_1, min_auto = push_to_lex_minimal(subgroup, c[1])
-            c = (min_auto @ c.T).T
+            c = (min_auto @ c.T).T % subgroup
             result[cand_ind, perm_ind, 1] = np.sign(strides @ (c[1] - cand[1]))
             if result[cand_ind, perm_ind, 1] != 0:
                 result[cand_ind, perm_ind, 2:] = result[cand_ind, perm_ind, 1]
