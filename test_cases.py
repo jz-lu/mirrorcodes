@@ -29,7 +29,7 @@ def get_stabilizers(code):
         * stabs (list[stim.PauliString]): stabilizer tableau in stim form (list of stim.PauliString objects)
         * IS_CSS (bool): bit indicating if code is CSS.
     """
-    stabs = None
+    stabs = []
     IS_CSS = False
     if code == "5qubit":
         stabs = stimify_stabs(['XZZXI', 'IXZZX', 'XIXZZ', 'ZXIXZ'])
