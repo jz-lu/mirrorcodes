@@ -279,29 +279,22 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
         for perm_ind, perm in enumerate(perms):
             c = np.ndarray.copy(cand[perm])
             c -= c[0]
+            c[Z_wt:] -= c[Z_wt] - (c[Z_wt] % (2 if p == 2 else 1))
             c %= subgroup
             min_1, min_auto = push_to_lex_minimal(subgroup, c[1])
             c = (min_auto @ c.T).T % subgroup
-            result[cand_ind, perm_ind, 1] = np.sign(strides @ (c[1] - cand[1]))
+            result[cand_ind, perm_ind, 1:] = np.sign(strides @ (c[1] - cand[1]))
             if result[cand_ind, perm_ind, 1] != 0:
-                result[cand_ind, perm_ind, 2:] = result[cand_ind, perm_ind, 1]
                 continue
-            isos = []
+            isos = automorphisms_fixing_vectors(subgroup, [cand[1]])
             for i in range(2, Z_wt + X_wt):
-                if i == 2:
-                    isos = automorphisms_fixing_vectors(subgroup, cand[1:i])
-                else:
+                if i > 2:
                     isos = np.array([iso for iso in isos if (np.mod(iso @ cand[i - 1], subgroup) == cand[i - 1]).all()])
                 values = np.array([np.mod(iso @ c[i], subgroup) for iso in isos])
-                if i == Z_wt:
-                    values %= (2 - (p % 2))
-                result[cand_ind, perm_ind, i] = np.sign(min(values @ strides) - strides @ cand[i])
-                if result[cand_ind, perm_ind, i] != 0:
-                    result[cand_ind, perm_ind, i + 1:] = result[cand_ind, perm_ind, i]
+                sign = np.sign(min(values @ strides) - strides @ cand[i])
+                result[cand_ind, perm_ind, i:] = sign
+                if sign != 0:
                     break
-                if i == Z_wt:
-                    c[i:] -= c[i] - cand[i]
-                    c %= subgroup
     return result
 
 
