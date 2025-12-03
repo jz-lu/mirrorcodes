@@ -34,15 +34,9 @@ def _get_perms(Z_wt: int, X_wt: int):
     total = Z_wt + X_wt
     perms = []
     for perm in it.permutations(range(total)):
-        if max(perm[:Z_wt]) == Z_wt - 1 or (Z_wt != X_wt or min(perm[:Z_wt]) == Z_wt):
+        if max(perm[:Z_wt]) == Z_wt - 1 or (Z_wt == X_wt and min(perm[:Z_wt]) == Z_wt):
             perms.append(tuple(perm))
     return tuple(perms)
-
-
-@lru_cache(maxsize=None)
-def _get_twos(total: int):
-    """Strides for the vector [2,2,...,2] of given length."""
-    return tuple(find_strides([2] * total))
 
 
 # ============================================================
@@ -107,8 +101,6 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
     vec_indices = [0]
 
     while True:
-        if len(vec_indices) > 4 and vec_indices[1] == 1 and vec_indices[2] == 5 and vec_indices[3] == 4 and vec_indices[4] == 9:
-            pass
         last_idx = vec_indices[-1]
         current_layer = candidates[-1]
 
