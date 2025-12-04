@@ -3,9 +3,10 @@ import glob
 import pickle
 import os
 
+results = [[]]
 for s in range(1, 4):
     missing = []
-    for i in range(201):
+    for i in range(301):
         if Path(f"data/STAGE{s}_n{i}_part0.pkl").is_file():
             result = []
             cur = 0
@@ -20,7 +21,7 @@ for s in range(1, 4):
             elif Path(f"data/STAGE{s}_n{i}.pkl").is_file():
                 os.remove(f"data/STAGE{s}_n{i}.pkl")
         if Path(f"data/STAGE{s}_n{i}.pkl").is_file():
-            if s is not 3:
+            if s != 3:
                 continue
             with open(f"data/STAGE3_n{i}.pkl", "rb") as f:
                 data = pickle.load(f)
@@ -37,5 +38,11 @@ for s in range(1, 4):
             with open(f"data/STAGE2_n{i}.pkl", "rb") as f:
                 missing += [f"{i} ({len(pickle.load(f))} codes)"]
         else:
-            missing += [i]
+            add = True
+            for t in range(1, s):
+                if i in results[t]:
+                    add = False
+            if add:
+                missing += [i]
+    results += [missing]
     print(f"Missing {missing} for stage {s}")
