@@ -22,11 +22,11 @@ from util import find_strides, index_to_array, partitions
 
 
 # ============================================================
-# Small caches for permutations and [2,...,2] strides
+# Small cache for permutations
 # ============================================================
 
 @lru_cache(maxsize=None)
-def _get_perms(Z_wt: int, X_wt: int):
+def get_perms(Z_wt: int, X_wt: int):
     """
     Permutations of {0, ..., Z_wt + X_wt - 1} with the original
     filtering condition from the code.
@@ -124,20 +124,41 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
                     tuple(int(x) for x in candidates[level][vec_indices[level]])
                     for level in range(depth)
                 )
-                isos = automorphisms_fixing_vectors(p, lambdas, fixed)
-                if isos.size == 0:
-                    vec_indices[-1] += 1
-                    candidates.pop()
-                    continue
 
-                for v in elems:
-                    if depth == Z_wt and v.max() > (1 if p == 2 else 0):
-                        if p > 2:
-                            break
-                    else:
+                # Check if all fixed vectors are zero
+                all_fixed_zero = all(
+                    all(x == 0 for x in f) for f in fixed
+                )
+
+                if all_fixed_zero:
+                    # No constraints yet: use push_to_lex_minimal instead of
+                    # enumerating all automorphisms with automorphisms_fixing_vectors.
+                    for v in elems:
+                        if depth == Z_wt and v.max() > (1 if p == 2 else 0):
+                            if p > 2:
+                                break
+                        # Compute lex-minimal image of v under full Aut(G)
+                        A = push_to_lex_minimal(p, lambdas, tuple(int(x) for x in v))
+                        A_np = np.array(A, dtype=int)
+                        v_img = (A_np @ v) % subgroup_np
+                        # Keep v only if it is already lex-minimal in its orbit
+                        if np.array_equal(v_img, v):
+                            candidates[-1].append(v)
+                else:
+                    # Nontrivial constraints: use automorphisms_fixing_vectors
+                    isos = automorphisms_fixing_vectors(p, lambdas, fixed)
+                    if isos.size == 0:
+                        vec_indices[-1] += 1
+                        candidates.pop()
+                        continue
+
+                    for v in elems:
+                        if depth == Z_wt and v.max() > (1 if p == 2 else 0):
+                            if p > 2:
+                                break
                         images = (isos @ v) % subgroup_np  # (#isos, r)
                         lex_vals = images @ strides
-                        if v @ strides <= lex_vals.min():
+                        if (v @ strides) <= lex_vals.min():
                             candidates[-1].append(v)
 
             vec_indices.append(0)
@@ -158,25 +179,20 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
 
 
 # ============================================================
-# 3) Permutation bins (memory-efficient: earliest pos + sign)
+# 3) Permutation bins (memory-efficient: signed position)
 # ============================================================
 
 def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
     """
     For each candidate code on a prime-power subgroup and each permutation,
-    compute the *earliest* non-zero sign and its coordinate.
+    compute the *earliest* non-zero sign and encode it as a single signed
+    position:
 
-    Instead of returning a full (#cands, #perms, total) sign matrix,
-    we return two arrays:
+        block_spos[cand, perm] = 0    : all zeros (no sign)
+                                   k  : earliest non-zero sign = +1 at coord k
+                                  -k  : earliest non-zero sign = -1 at coord k
 
-        block_pos[cand, perm]  : earliest coordinate index i (1..total-1)
-                                 where sign != 0; 0 means "all zeros".
-        block_sign[cand, perm] : sign at that position, in {-1, 0, +1}.
-
-    This is enough to reconstruct everything the original code used:
-    the sign row is zeros before that coordinate and constant sign
-    afterward, and the final filter only cares about whether the sign
-    is negative or not.
+    where 1 <= k <= total-1 and total = Z_wt + X_wt.
     """
     subgroup = tuple(subgroup)
     factors = [list(primefac(s)) for s in subgroup]
@@ -190,16 +206,14 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
     total = Z_wt + X_wt
 
     if num_cands == 0 or num_perms == 0:
-        return (
-            np.zeros((num_cands, num_perms), dtype=np.uint8),
-            np.zeros((num_cands, num_perms), dtype=np.int8),
-        )
+        return np.zeros((num_cands, num_perms), dtype=np.int8)
 
     perms_np = np.array(perms, dtype=int)
 
-    # Earliest position (0 = none), and sign (-1,0,1)
-    block_pos = np.zeros((num_cands, num_perms), dtype=np.uint8)
-    block_sign = np.zeros((num_cands, num_perms), dtype=np.int8)
+    # Signed earliest position (0 = none)
+    block_spos = np.zeros((num_cands, num_perms), dtype=np.int8)
+
+    ZERO_PREFIX = object()  # sentinel for "all fixed vectors so far are zero"
 
     for cand_ind, cand in enumerate(candidates):
         cand = np.asarray(cand, dtype=np.int16)
@@ -208,15 +222,46 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
         # isos_by_prefix[i] = automorphisms that fix cand[1],...,cand[i-1]
         isos_by_prefix = [None] * total
         if total > 2:
-            fixed1 = (tuple(int(x) for x in cand[1]),)
-            isos_current = automorphisms_fixing_vectors(p, lambdas, fixed1)
-            isos_by_prefix[2] = isos_current
+            # Handle the first prefix (just cand[1])
+            if np.all(cand[1] == 0):
+                # All vectors so far (just cand[1]) are zero:
+                # do NOT call automorphisms_fixing_vectors here.
+                isos_by_prefix[2] = ZERO_PREFIX
+                isos_current = None
+            else:
+                fixed1 = (tuple(int(x) for x in cand[1]),)
+                isos_current = automorphisms_fixing_vectors(p, lambdas, fixed1)
+                isos_by_prefix[2] = isos_current
+
+            # Longer prefixes
             for i in range(3, total):
-                if np.size(isos_current, axis = 0) > 1:
-                    v_prev = cand[i - 1]
-                    images_prev = (isos_current @ v_prev) % subgroup_np
-                    mask = (images_prev == v_prev).all(axis=1)
-                    isos_current = isos_current[mask]
+                # Prefix cand[1..i-1]
+                prefix_block = cand[1:i]
+                if not np.any(prefix_block):
+                    # All fixed vectors so far are zero: mark as ZERO_PREFIX
+                    isos_by_prefix[i] = ZERO_PREFIX
+                    isos_current = None
+                    continue
+
+                # We have at least one non-zero vector in the prefix
+                if isos_current is None:
+                    # Compute stabiliser from scratch using the non-zero prefix vectors
+                    fixed_prefix = tuple(
+                        tuple(int(x) for x in row)
+                        for row in prefix_block
+                        if np.any(row)
+                    )
+                    if fixed_prefix:
+                        isos_current = automorphisms_fixing_vectors(p, lambdas, fixed_prefix)
+                    else:
+                        isos_current = None
+                else:
+                    if np.size(isos_current, axis=0) > 1:
+                        v_prev = cand[i - 1]
+                        images_prev = (isos_current @ v_prev) % subgroup_np
+                        mask = (images_prev == v_prev).all(axis=1)
+                        isos_current = isos_current[mask]
+
                 isos_by_prefix[i] = isos_current
 
         for perm_ind in range(num_perms):
@@ -232,9 +277,9 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
                 c[Z_wt:] -= c[Z_wt]
 
             # Push c[1] to lex-minimal and apply automorphism to all rows
-            A = push_to_lex_minimal(p, lambdas, tuple(int(x) for x in c[1]))
-            A_np = np.array(A, dtype=int)
-            c = (A_np @ c.T).T % subgroup_np
+            A1 = push_to_lex_minimal(p, lambdas, tuple(int(x) for x in c[1]))
+            A1_np = np.array(A1, dtype=int)
+            c = (A1_np @ c.T).T % subgroup_np
             c = c.astype(np.int16, copy=False)
 
             # First candidate coordinate: index 1
@@ -247,44 +292,66 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
                 s1 = 0
 
             if s1 != 0:
-                block_pos[cand_ind, perm_ind] = 1
-                block_sign[cand_ind, perm_ind] = s1
+                block_spos[cand_ind, perm_ind] = np.int8(s1 * 1)
                 continue
 
-            # Compare positions 2,3,... until a sign is determined
+            # Compare positions 2, 3, ... until a sign is determined
             for i in range(2, total):
-                isos = isos_by_prefix[i] if total > 2 else None
-                if isos is None or isos.size == 0:
-                    # No further restrictions ⇒ stays zero
+                if total <= 2:
                     break
 
-                base = int(strides @ cand[i])
-                min_iso = isos[0]
-                min_val = int(strides @ c[i])
-                for iso in isos[1:]:
-                    img = (iso @ c[i]) % subgroup_np
-                    lex_val = int(strides @ img)
-                    if lex_val < min_val:
-                        min_iso = iso
-                        min_val = lex_val
-                        if min_val < base:
-                            break
-                diff = min_val - base
+                isos = isos_by_prefix[i]
 
-                if diff > 0:
-                    sign = 1
-                elif diff < 0:
-                    sign = -1
+                # Case 1: prefix is all zeros -> use full Aut(G) via push_to_lex_minimal
+                if isos is ZERO_PREFIX:
+                    base = int(strides @ cand[i])
+                    A_i = push_to_lex_minimal(p, lambdas, tuple(int(x) for x in c[i]))
+                    A_i_np = np.array(A_i, dtype=int)
+                    img = (A_i_np @ c[i]) % subgroup_np
+                    lex_val = int(strides @ img)
+                    diff = lex_val - base
+
+                    if diff > 0:
+                        sign = 1
+                    elif diff < 0:
+                        sign = -1
+                    else:
+                        sign = 0
+                        # Align entire c with this automorphism for consistency
+                        c = (A_i_np @ c.T).T % subgroup_np
+
+                # Case 2: no automorphisms left or not computed -> no further sign
+                elif isos is None or (hasattr(isos, "size") and isos.size == 0):
+                    break
+
+                # Case 3: nontrivial stabiliser group: enumerate isos
                 else:
-                    sign = 0
-                    c = (min_iso @ c.T).T % subgroup_np
+                    base = int(strides @ cand[i])
+                    min_iso = isos[0]
+                    min_val = 10**9
+                    for iso in isos:
+                        img = (iso @ c[i]) % subgroup_np
+                        lex_val = int(strides @ img)
+                        if lex_val < min_val:
+                            min_iso = iso
+                            min_val = lex_val
+                            if min_val < base:
+                                break
+                    diff = min_val - base
+
+                    if diff > 0:
+                        sign = 1
+                    elif diff < 0:
+                        sign = -1
+                    else:
+                        sign = 0
+                        c = (min_iso @ c.T).T % subgroup_np
 
                 if sign != 0:
-                    block_pos[cand_ind, perm_ind] = i
-                    block_sign[cand_ind, perm_ind] = sign
+                    block_spos[cand_ind, perm_ind] = np.int8(sign * i)
                     break
 
-    return block_pos, block_sign
+    return block_spos
 
 
 # ============================================================
@@ -319,15 +386,14 @@ def _subgroup_cache_filename(Z_wt: int, X_wt: int, block):
 def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block):
     """
     Compute (or load from disk) both the minimal strings and the permutation
-    sign data for a given (Z_wt, X_wt, block).  block must be a tuple of
-    prime powers for a single prime.
+    signed-position data for a given (Z_wt, X_wt, block).  block must be a
+    tuple of prime powers for a single prime.
 
     Returns:
         codes_block : list of np.ndarray, each shape (Z_wt+X_wt, len(block))
-        block_pos   : np.ndarray, shape (num_cands, num_perms), uint8
-        block_sign  : np.ndarray, shape (num_cands, num_perms), int8
+        block_spos  : np.ndarray, shape (num_cands, num_perms), int8
 
-    Disk format (in subgroups/…pkl) is a dict with these three keys.
+    Disk format (in subgroups/…pkl) is a dict with these keys.
     """
     block = tuple(block)
     path = _subgroup_cache_filename(Z_wt, X_wt, block)
@@ -335,26 +401,24 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block):
     if os.path.exists(path):
         with open(path, "rb") as f:
             data = pickle.load(f)
-        return data["codes_block"], data["block_pos"], data["block_sign"]
+        return data["codes_block"], data["block_spos"]
 
-    perms = _get_perms(Z_wt, X_wt)
+    perms = get_perms(Z_wt, X_wt)
     codes_block = minimal_strings_for_subgroup(Z_wt, X_wt, block)
-    block_pos, block_sign = permutation_bins(Z_wt, X_wt, block, perms, codes_block)
+    block_spos = permutation_bins(Z_wt, X_wt, block, perms, codes_block)
 
     # Normalise dtypes to small ints
     codes_block = [np.asarray(code, dtype=np.int16) for code in codes_block]
-    block_pos = np.asarray(block_pos, dtype=np.uint8)
-    block_sign = np.asarray(block_sign, dtype=np.int8)
+    block_spos = np.asarray(block_spos, dtype=np.int8)
 
     data = {
         "codes_block": codes_block,
-        "block_pos": block_pos,
-        "block_sign": block_sign,
+        "block_spos": block_spos,
     }
     with open(path, "wb") as f:
         pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-    return codes_block, block_pos, block_sign
+    return codes_block, block_spos
 
 
 # ============================================================
@@ -388,55 +452,54 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
             i += 1
         blocks.append(tuple(block))
 
-    perms = _get_perms(Z_wt, X_wt)
+    perms = get_perms(Z_wt, X_wt)
     num_perms = len(perms)
 
     # Each entry in `codes` is:
-    #   (vecs, pos_agg, sign_agg)
+    #   (vecs, spos_agg)
     # where:
     #   vecs     : np.ndarray (total, num_coords_so_far), int16
-    #   pos_agg  : np.ndarray (num_perms,), uint8
-    #   sign_agg : np.ndarray (num_perms,), int8
+    #   spos_agg : np.ndarray (num_perms,), int8
     codes = [
         (
             np.zeros((total, 0), dtype=np.int16),
-            np.zeros(num_perms, dtype=np.uint8),
             np.zeros(num_perms, dtype=np.int8),
         )
     ]
 
     for block in blocks:
-        codes_block, block_pos, block_sign = _subgroup_codes_and_bins(Z_wt, X_wt, block)
+        codes_block, block_spos = _subgroup_codes_and_bins(Z_wt, X_wt, block)
         if not codes_block:
             return []
 
         new_codes = []
-        for vecs, pos_agg, sign_agg in codes:
+        for vecs, spos_agg in codes:
             for idx, code2 in enumerate(codes_block):
-                pos_blk = block_pos[idx]
-                sign_blk = block_sign[idx]
+                spos_blk = block_spos[idx]
 
-                # Combine (pos_agg, sign_agg) with (pos_blk, sign_blk)
-                new_pos = pos_agg.copy()
-                new_sign = sign_agg.copy()
+                # Combine signed positions:
+                #  - If aggregate is zero and block non-zero: take block.
+                #  - If both non-zero: take the earlier (smaller |pos|).
+                new_spos = spos_agg.copy()
 
-                agg_zero = (sign_agg == 0)
-                blk_nonzero = (sign_blk != 0)
+                blk_nonzero = (spos_blk != 0)
+                if np.any(blk_nonzero):
+                    agg_nonzero = (spos_agg != 0)
 
-                # Case 1: previously zero, block non-zero -> take block
-                idx1 = agg_zero & blk_nonzero
-                new_pos[idx1] = pos_blk[idx1]
-                new_sign[idx1] = sign_blk[idx1]
+                    # Case 1: previously zero, block non-zero -> take block
+                    idx1 = (~agg_nonzero) & blk_nonzero
+                    new_spos[idx1] = spos_blk[idx1]
 
-                # Case 2: both non-zero -> take earlier position
-                idx2 = (~agg_zero) & blk_nonzero
-                earlier = pos_blk < pos_agg
-                idx2 &= earlier
-                new_pos[idx2] = pos_blk[idx2]
-                new_sign[idx2] = sign_blk[idx2]
+                    # Case 2: both non-zero -> take earlier position
+                    idx2 = agg_nonzero & blk_nonzero
+                    pos_agg = np.abs(spos_agg)
+                    pos_blk = np.abs(spos_blk)
+                    earlier = pos_blk < pos_agg
+                    idx2 &= earlier
+                    new_spos[idx2] = spos_blk[idx2]
 
                 combined_vecs = np.concatenate((vecs, code2), axis=1)
-                new_codes.append((combined_vecs, new_pos, new_sign))
+                new_codes.append((combined_vecs, new_spos))
 
         if not new_codes:
             return []
@@ -444,10 +507,11 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
 
     # Final filters and build MirrorCode objects.
     # A row (per permutation) has negative scalar in the original "signs @ twos"
-    # iff its earliest sign is -1. So we only need to check sign_agg != -1.
+    # iff its earliest sign is -1. In the signed-position encoding, that's
+    # exactly "signed_pos < 0".
     good = []
-    for vecs, pos_agg, sign_agg in codes:
-        if np.any(sign_agg == -1):
+    for vecs, spos_agg in codes:
+        if np.any(spos_agg < 0):
             continue
 
         z_part = vecs[:Z_wt]
@@ -509,12 +573,12 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
 
 
 # ============================================================
-# 7) Main
+# 7) Main (test harness)
 # ============================================================
 
 def main():
-    for i in range(25):
-       print(i, len(find_all_codes(i, 3, 3)))
+    for i in range(37):
+        print(i, len(find_all_codes(i, 3, 3)))
 
 
 if __name__ == "__main__":
