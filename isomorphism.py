@@ -1,105 +1,54 @@
 from itertools import product, combinations
-from functools import lru_cache
 import numpy as np
 
 
-# ============================================================
-# Internal helpers
-# ============================================================
+# ---------- Basic helpers ----------
 
-@lru_cache(maxsize=None)
-def _group_prime_powers(p: int, lambdas: tuple[int, ...]):
+def factor_prime_power(n: int):
+    """Return (p, k) such that n = p**k with p prime."""
+    if n <= 1:
+        raise ValueError("Group factors must be prime powers ≥ 2.")
+    for p in range(2, n + 1):
+        if n % p == 0:
+            k = 0
+            m = n
+            while m % p == 0:
+                m //= p
+                k += 1
+            if m == 1:
+                return p, k
+    raise ValueError(f"{n} is not a prime power")
+
+
+# ---------- 1) Lexicographically minimal vectors for a p-group ----------
+
+def lex_minimal_vectors(p, lambdas):
     """
-    For a fixed prime p and lambdas = (λ1, ..., λr),
-    return (p_pows, moduli) where:
+    Given a finite abelian p-group described by
 
-        p_pows[k] = p**k for 0 <= k <= max(lambdas)
-        moduli[i] = p**λ_i
+        G = ⊕_i Z / p^{λ_i} Z
+
+    with λ_i in `lambdas` (non-decreasing), return all lexicographically minimal
+    vectors (one per Aut(G)-orbit) as tuples (x_1, ..., x_r) with
+    0 <= x_i < p^{λ_i}.
+
+    This is the same construction as in the original version, but the group
+    type is now passed as (p, lambdas).
     """
-    if not lambdas:
-        return (1,), ()
-    max_lambda = max(lambdas)
-    p_pows = [1]
-    for _ in range(max_lambda):
-        p_pows.append(p_pows[-1] * p)
-    p_pows = tuple(p_pows)
-    moduli = tuple(p_pows[lam] for lam in lambdas)
-    return p_pows, moduli
-
-
-def _extend_basis_mod_p(basis, row_mod_p, inv_mod_p, p: int):
-    """
-    Incrementally maintain an F_p row-echelon basis.
-
-    basis:
-        tuple of rows (each a tuple of ints), already reduced with
-        leading 1 pivots.
-
-    row_mod_p:
-        candidate row (tuple of ints), entries already reduced mod p.
-
-    Returns:
-        - new_basis (basis with reduced row appended) if row is independent;
-        - None if row is dependent.
-    """
-    r = list(row_mod_p)
-    m = len(r)
-
-    # Reduce r against current basis
-    for b in basis:
-        for j in range(m):
-            bj = b[j]
-            if bj:
-                rj = r[j]
-                if rj:
-                    # subtract rj * b, pivot of b is 1
-                    factor = rj
-                    for k in range(j, m):
-                        r[k] = (r[k] - factor * b[k]) % p
-                break
-
-    # Find first non-zero entry
-    for j in range(m):
-        val = r[j] % p
-        if val:
-            inv = inv_mod_p[val]
-            for k in range(j, m):
-                r[k] = (r[k] * inv) % p
-            return basis + (tuple(r),)
-
-    return None
-
-
-def _p_adic_valuation(x: int, p: int) -> int:
-    """v_p(x) for x != 0."""
-    v = 0
-    while x % p == 0:
-        x //= p
-        v += 1
-    return v
-
-
-# ============================================================
-# 1) Lexicographically minimal vectors (p-group)
-# ============================================================
-
-@lru_cache(maxsize=None)
-def lex_minimal_vectors(p: int, lambdas: tuple[int, ...]):
-    """
-    Given a finite abelian p-group specified by
-
-        p, lambdas = p, (λ1, λ2, ..., λr)  with λ1 <= ... <= λr,
-
-    return all lexicographically minimal vectors (one per Aut(G)-orbit)
-    as a tuple of tuples. Each vector x = (x_1, ..., x_r) satisfies
-        0 <= x_i < p**λ_i.
-    """
+    lambdas = tuple(lambdas)
     r = len(lambdas)
-    p_pows, _ = _group_prime_powers(p, lambdas)
 
+    # Always include the zero vector
     vectors = {tuple(0 for _ in range(r))}
-    indices = range(r)
 
+    indices = list(range(r))
+
+    # We use the characterization:
+    # Choose indices i_1 < ... < i_t and exponents α_j with
+    #      0 <= α_1 < ... < α_t < λ_{i_t}
+    # and
+    #      λ_{i_1} - α_1 < ... < λ_{i_t} - α_t
+    # Then the corresponding vector has x_{i_j} = p**α_j, others = 0.
     for t in range(1, r + 1):
         for idxs in combinations(indices, t):
 
@@ -108,7 +57,7 @@ def lex_minimal_vectors(p: int, lambdas: tuple[int, ...]):
                     coords = [0] * r
                     for j, idx in enumerate(idxs):
                         alpha = alphas[j]
-                        coords[idx] = p_pows[alpha]
+                        coords[idx] = p ** alpha
                     vectors.add(tuple(coords))
                     return
 
@@ -118,270 +67,40 @@ def lex_minimal_vectors(p: int, lambdas: tuple[int, ...]):
 
                 for alpha in range(start_alpha, lam):
                     beta = lam - alpha
-                    if prev_beta is not None and beta <= prev_beta:
+                    if prev_beta is not None and not (beta > prev_beta):
                         continue
-                    rec(pos + 1, alpha, beta, alphas + (alpha,))
+                    rec(pos + 1, alpha, beta, alphas + [alpha])
 
-            rec(0, None, None, ())
+            rec(0, None, None, [])
 
-    return tuple(sorted(vectors))
+    return [tuple(v) for v in sorted(vectors)]
 
 
-# ============================================================
-# 2) Automorphisms fixing given vectors (p-group)
-# ============================================================
+# ---------- 2) Endomorphism entries and rank mod p ----------
 
-@lru_cache(maxsize=None)
-def automorphisms_fixing_vectors(
-    p: int,
-    lambdas: tuple[int, ...],
-    fixed_vectors: tuple[tuple[int, ...], ...],
-):
+def endo_entry_options(p, lam_i, lam_j):
     """
-    Enumerate all automorphisms of the abelian p-group G specified by
-        p, lambdas = p, (λ1, ..., λr)
-    that fix each vector in `fixed_vectors`.
+    Allowed values for matrix entry a_ij of a group endomorphism of
+    ⊕_k Z/p^{λ_k}Z:
 
-    Input:
-        p            : prime
-        lambdas      : tuple of exponents (λ1, ..., λr)
-        fixed_vectors: tuple of vectors, each a tuple of length r
+    Row i lives modulo n_i = p^{lam_i}. For the homomorphism condition,
+    p^{lam_j} * e_j must map to 0 in row i, so:
 
-    Output:
-        numpy array of shape (k, r, r), each slice an automorphism matrix.
+      - If lam_j < lam_i: a_ij must be divisible by p^{lam_i - lam_j}.
+      - If lam_j >= lam_i: a_ij can be any element mod p^{lam_i}.
     """
-    r = len(lambdas)
-    lambdas_t = lambdas
-    p_pows, moduli = _group_prime_powers(p, lambdas_t)
-
-    # Normalise fixed vectors modulo the group
-    fixed = []
-    for v in fixed_vectors:
-        fixed.append(tuple(v_i % n_i for v_i, n_i in zip(v, moduli)))
-    fixed = tuple(fixed)
-
-    # Precompute inverses in F_p
-    inv_mod_p = {a: pow(a, -1, p) for a in range(1, p)}
-
-    row_candidates = []
-
-    for i in range(r):
-        n_i = moduli[i]
-        lam_i = lambdas_t[i]
-
-        # Allowed residues per column j
-        opts_per_j = []
-        for j in range(r):
-            lam_j = lambdas_t[j]
-            if lam_j < lam_i:
-                step = p_pows[lam_i - lam_j]
-                opts_per_j.append(range(0, n_i, step))
-            else:
-                opts_per_j.append(range(n_i))
-
-        candidates_i = []
-        if fixed:
-            for entries in product(*opts_per_j):
-                ok = True
-                for v in fixed:
-                    s = 0
-                    for a, b in zip(entries, v):
-                        s += a * b
-                    if s % n_i != v[i]:
-                        ok = False
-                        break
-                if ok:
-                    candidates_i.append(tuple(entries))
-        else:
-            for entries in product(*opts_per_j):
-                candidates_i.append(tuple(entries))
-
-        row_candidates.append(tuple(candidates_i))
-
-    automorphisms = []
-
-    def backtrack(i, current_rows, basis):
-        if i == r:
-            automorphisms.append([list(row) for row in current_rows])
-            return
-
-        candidates_i = row_candidates[i]
-        for row in candidates_i:
-            row_mod_p = tuple(c % p for c in row)
-            if not any(row_mod_p):
-                continue
-            new_basis = _extend_basis_mod_p(basis, row_mod_p, inv_mod_p, p)
-            if new_basis is None:
-                continue
-            backtrack(i + 1, current_rows + (row,), new_basis)
-
-    backtrack(0, (), ())
-    if not automorphisms:
-        return np.zeros((0, r, r), dtype=int)
-    return np.array(automorphisms, dtype=int)
+    n_i = p ** lam_i
+    if lam_j < lam_i:
+        step = p ** (lam_i - lam_j)
+        return list(range(0, n_i, step))
+    else:
+        return list(range(n_i))
 
 
-# ============================================================
-# 3) Element order in a p-group
-# ============================================================
-
-def element_order_p_group(
-    p: int,
-    lambdas: tuple[int, ...],
-    v: tuple[int, ...],
-) -> int:
-    """
-    Compute the order of v in the p-group G determined by (p, lambdas).
-    Returns p^k or 1 for zero vector.
-    """
-    lambdas_t = lambdas
-    _, moduli = _group_prime_powers(p, lambdas_t)
-    v_norm = [v_i % n_i for v_i, n_i in zip(v, moduli)]
-
-    max_exp = 0
-    any_nonzero = False
-    for coord, lam in zip(v_norm, lambdas_t):
-        if coord == 0:
-            continue
-        any_nonzero = True
-        val = _p_adic_valuation(coord, p)
-        exp = lam - val
-        if exp > max_exp:
-            max_exp = exp
-
-    if not any_nonzero:
-        return 1
-
-    p_pows, _ = _group_prime_powers(p, lambdas_t)
-    return p_pows[max_exp]
-
-
-# ============================================================
-# 4) Internal: construct automorphism sending one vector to another
-# ============================================================
-
-@lru_cache(maxsize=None)
-def _automorphism_sending_vector(
-    p: int,
-    lambdas: tuple[int, ...],
-    source: tuple[int, ...],
-    target: tuple[int, ...],
-):
-    """
-    Try to construct an automorphism A of the p-group (p, lambdas)
-    with A * source = target.
-
-    Returns:
-        - matrix A (list of rows) if possible
-        - None if no such automorphism exists
-    """
-    r = len(lambdas)
-    lambdas_t = lambdas
-    p_pows, moduli = _group_prime_powers(p, lambdas_t)
-
-    src = tuple(source[i] % moduli[i] for i in range(r))
-    tgt = tuple(target[i] % moduli[i] for i in range(r))
-
-    # Nonzero -> zero impossible under automorphism
-    if all(x == 0 for x in src) and any(x != 0 for x in tgt):
-        return None
-
-    # Zero -> zero: identity
-    if all(x == 0 for x in src) and all(x == 0 for x in tgt):
-        return [[int(i == j) for j in range(r)] for i in range(r)]
-
-    inv_mod_p = {a: pow(a, -1, p) for a in range(1, p)}
-
-    row_candidates = []
-
-    for i in range(r):
-        n_i = moduli[i]
-        lam_i = lambdas_t[i]
-
-        opts_per_j = []
-        for j in range(r):
-            lam_j = lambdas_t[j]
-            if lam_j < lam_i:
-                step = p_pows[lam_i - lam_j]
-                opts_per_j.append(range(0, n_i, step))
-            else:
-                opts_per_j.append(range(n_i))
-
-        candidates_i = []
-        for entries in product(*opts_per_j):
-            s = 0
-            for a, b in zip(entries, src):
-                s += a * b
-            if s % n_i == tgt[i]:
-                candidates_i.append(tuple(entries))
-
-        row_candidates.append(tuple(candidates_i))
-
-    def backtrack(i, current_rows, basis):
-        if i == r:
-            return [list(row) for row in current_rows]
-
-        candidates_i = row_candidates[i]
-        for row in candidates_i:
-            row_mod_p = tuple(c % p for c in row)
-            if not any(row_mod_p):
-                continue
-            new_basis = _extend_basis_mod_p(basis, row_mod_p, inv_mod_p, p)
-            if new_basis is None:
-                continue
-            result = backtrack(i + 1, current_rows + (row,), new_basis)
-            if result is not None:
-                return result
-        return None
-
-    return backtrack(0, (), ())
-
-
-# ============================================================
-# 5) Main: push to lex-minimal representative
-# ============================================================
-
-@lru_cache(maxsize=None)
-def push_to_lex_minimal(
-    p: int,
-    lambdas: tuple[int, ...],
-    v: tuple[int, ...],
-):
-    """
-    Given a p-group (p, lambdas) and a vector v, find an automorphism A
-    such that A*v is the lexicographically minimal element in the Aut(G)-orbit
-    of v. Returns A as list-of-lists (rows).
-    """
-    r = len(lambdas)
-    lambdas_t = lambdas
-    _, moduli = _group_prime_powers(p, lambdas_t)
-
-    v_norm = tuple(v_i % n_i for v_i, n_i in zip(v, moduli))
-
-    # Zero is already lex-minimal
-    if all(x == 0 for x in v_norm):
-        return [[int(i == j) for j in range(r)] for i in range(r)]
-
-    ord_v = element_order_p_group(p, lambdas_t, v_norm)
-    candidates = lex_minimal_vectors(p, lambdas_t)
-
-    for w in candidates:
-        if element_order_p_group(p, lambdas_t, w) != ord_v:
-            continue
-        A = _automorphism_sending_vector(p, lambdas_t, v_norm, w)
-        if A is not None:
-            return A
-
-    raise RuntimeError("No automorphism found mapping v to a lex-minimal representative.")
-
-
-# ============================================================
-# 6) rank_mod_p helper (optional)
-# ============================================================
-
-def rank_mod_p(rows, p: int) -> int:
+def rank_mod_p(rows, p):
     """
     Compute the rank over F_p of a matrix given by its list of rows.
+    rows: list of iterables of equal length, entries interpreted mod p.
     """
     if not rows:
         return 0
@@ -416,56 +135,396 @@ def rank_mod_p(rows, p: int) -> int:
     return rank
 
 
-# ============================================================
-# 7) Equivalence under shifts in a finite abelian group
-# ============================================================
+# ---------- 3) Automorphisms fixing given vectors (with shifts) ----------
 
-def is_single_equivalence_class_under_shifts(
-    Z_wt: int,
-    X_wt: int,
-    prime_powers,
-    vectors,
-) -> bool:
+def automorphisms_fixing_vectors(p, lambdas, Z_wt, fixed_vectors):
     """
-    Same semantics as in your original code, but assumes:
-        - each modulus is a prime power,
-        - product(prime_powers) <= 256,
-        - len(vectors) == Z_wt + X_wt.
+    Enumerate all automorphisms A of the p-group described by (p, lambdas)
+    that "fix" the given vectors up to an X-shift, and return both the matrices
+    and the associated shifts.
 
-    No safety checks for speed.
+    Input:
+        p           : prime
+        lambdas     : iterable of exponents λ_i (non-decreasing)
+        Z_wt        : number of Z rows (first Z_wt rows are treated as Z-rows)
+        fixed_vectors: list/tuple of vectors v_k (each length r)
+
+    Let t = len(fixed_vectors). Let r = len(lambdas).
+
+    Constraints:
+      - For indices k < Z_wt, we require A(v_k) = v_k (mod group).
+      - If t <= Z_wt, no X-rows are fixed yet; the shift is 0.
+
+      - If t > Z_wt, let v_base = v_{Z_wt} be the first X-row in fixed_vectors.
+        For every X-row index k >= Z_wt, we want there to be a shift s(F)
+        such that:
+
+            A(v_k) - s(F) = v_k  (mod each coordinate modulus).
+
+        This is equivalent to requiring that A fix all differences
+        (v_k - v_base); we then define:
+
+            s(F) = A(v_base) - v_base  (mod group),
+
+        and one checks that the condition above holds for all k >= Z_wt.
+
+    Additional condition (NEW behaviour):
+      - If p == 2 and t > Z_wt (i.e. we have X-rows and nontrivial shifts),
+        then the only allowed shifts are those whose components are all
+        multiples of 2 modulo the corresponding modulus; i.e. every entry
+        of s(F) must be even. Any automorphism whose shift has an odd
+        component is discarded.
+
+    Returns:
+        (isos, shifts):
+
+          isos   : np.ndarray of shape (#isos, r, r), dtype=int
+                   each [a_ij] giving an automorphism in row-major form.
+
+          shifts : np.ndarray of shape (#isos, r), dtype=int
+                   the shift vector s(F) associated with each automorphism.
+
+        If no automorphisms exist, returns empty arrays of the appropriate
+        shapes.
     """
-    r = len(prime_powers)
+    lambdas = tuple(lambdas)
+    r = len(lambdas)
+    if r == 0:
+        return (np.empty((0, 0, 0), dtype=int),
+                np.empty((0, 0), dtype=int))
 
-    base_vectors = [
-        tuple(v_i % n_i for v_i, n_i in zip(v, prime_powers))
-        for v in vectors
+    # Moduli n_i = p^{λ_i}
+    moduli = np.array([p ** lam for lam in lambdas], dtype=int)
+
+    fixed_vectors = list(fixed_vectors)
+    t = len(fixed_vectors)
+
+    # Normalize fixed vectors mod each modulus
+    fixed = [
+        tuple(int(v[j]) % moduli[j] for j in range(r))
+        for v in fixed_vectors
     ]
 
-    from itertools import product as _prod
+    # For X-rows, if t > Z_wt, we use v_base = fixed[Z_wt]
+    baseX = None
+    diffs = []
+    if t > Z_wt:
+        baseX = fixed[Z_wt]
+        for k in range(Z_wt + 1, t):
+            dv = tuple(
+                (fixed[k][j] - baseX[j]) % moduli[j]
+                for j in range(r)
+            )
+            diffs.append(dv)
 
-    elems = list(_prod(*(range(n_i) for n_i in prime_powers)))
+    # Build row candidates row-by-row
+    row_candidates = []
+    indices_Z = range(min(t, Z_wt))
+
+    for i in range(r):
+        n_i = int(moduli[i])
+        opts_per_j = [
+            endo_entry_options(p, lambdas[i], lambdas[j]) for j in range(r)
+        ]
+        candidates_i = []
+
+        for entries in product(*opts_per_j):
+            row = list(entries)
+            ok = True
+
+            # Z-row constraints: A(v_k)[i] = v_k[i]
+            for k in indices_Z:
+                v = fixed[k]
+                dot = sum(row[j] * v[j] for j in range(r)) % n_i
+                if dot != v[i]:
+                    ok = False
+                    break
+            if not ok:
+                continue
+
+            # X-row difference constraints: A(v_k - v_base)[i] = (v_k - v_base)[i]
+            if baseX is not None:
+                for dv in diffs:
+                    dot = sum(row[j] * dv[j] for j in range(r)) % n_i
+                    if dot != dv[i]:
+                        ok = False
+                        break
+                if not ok:
+                    continue
+
+            candidates_i.append(tuple(row))
+
+        row_candidates.append(candidates_i)
+
+    # Backtrack to pick rows so that the matrix is invertible modulo p
+    automorphisms = []
+
+    def backtrack(i, current_rows, current_rows_mod_p):
+        if i == r:
+            automorphisms.append([list(row) for row in current_rows])
+            return
+
+        prev_rank = rank_mod_p(current_rows_mod_p, p)
+
+        for row in row_candidates[i]:
+            row_mod_p = tuple(c % p for c in row)
+            if all(c == 0 for c in row_mod_p):
+                continue
+
+            new_rows_mod_p = current_rows_mod_p + [row_mod_p]
+            new_rank = rank_mod_p(new_rows_mod_p, p)
+            if new_rank != prev_rank + 1:
+                continue
+
+            backtrack(i + 1, current_rows + [row], new_rows_mod_p)
+
+    backtrack(0, [], [])
+
+    if not automorphisms:
+        return (np.empty((0, r, r), dtype=int),
+                np.empty((0, r), dtype=int))
+
+    mats = np.array(automorphisms, dtype=int)
+
+    # Compute the shift s(F) = A(v_base) - v_base (mod group) if baseX is present
+    if baseX is not None:
+        baseX_vec = np.array(baseX, dtype=int)
+        images = np.einsum("aij,j->ai", mats, baseX_vec) % moduli
+        shifts = (images - baseX_vec) % moduli
+
+        # NEW: if p == 2, require all shift components to be even
+        if p == 2:
+            even_mask = (shifts % 2 == 0).all(axis=1)
+            mats = mats[even_mask]
+            shifts = shifts[even_mask]
+
+            if mats.shape[0] == 0:
+                return (np.empty((0, r, r), dtype=int),
+                        np.empty((0, r), dtype=int))
+    else:
+        shifts = np.zeros((mats.shape[0], r), dtype=int)
+
+        # For p == 2, zero is even anyway, so no extra filtering needed here.
+
+    return mats, shifts
+
+
+# ---------- 4) Element order and automorphism sending a vector ----------
+
+def _p_adic_valuation(x, p):
+    """
+    v_p(x) for x != 0, with x an integer.
+    (We will only call this with x reduced modulo a power of p and x != 0.)
+    """
+    v = 0
+    while x % p == 0:
+        x //= p
+        v += 1
+    return v
+
+
+def element_order_p_group(p, lambdas, v):
+    """
+    Compute the order of a vector v in the p-group given by (p, lambdas).
+
+      G = ⊕_i Z / p^{λ_i} Z
+
+    v : iterable of length r, entries are integers (reduced mod n_i internally).
+
+    Returns: p^k, where k is the maximal exponent among the coordinates,
+             or 1 if v is the zero vector.
+    """
+    lambdas = tuple(lambdas)
+    r = len(lambdas)
+    moduli = [p ** lam for lam in lambdas]
+
+    v_norm = [int(v_i) % n_i for v_i, n_i in zip(v, moduli)]
+
+    max_exp = 0
+    any_nonzero = False
+    for coord, lam in zip(v_norm, lambdas):
+        if coord == 0:
+            continue
+        any_nonzero = True
+        val = _p_adic_valuation(coord, p)
+        exp = lam - val
+        if exp > max_exp:
+            max_exp = exp
+
+    if not any_nonzero:
+        return 1  # order of the zero element
+
+    return p ** max_exp
+
+
+def _automorphism_sending_vector(p, lambdas, source, target):
+    """
+    Internal helper:
+    Try to construct a single automorphism A of the group (p, lambdas)
+    such that A * source = target.
+
+    Returns:
+        - a matrix A (list of rows) if possible
+        - None if no such automorphism exists
+    """
+    lambdas = tuple(lambdas)
+    r = len(lambdas)
+    moduli = [p ** lam for lam in lambdas]
+
+    if len(source) != r or len(target) != r:
+        raise ValueError("source and target must have same length as lambdas.")
+
+    src = tuple(int(source[i]) % moduli[i] for i in range(r))
+    tgt = tuple(int(target[i]) % moduli[i] for i in range(r))
+
+    # Easy impossibility check: nonzero -> zero cannot happen under an automorphism.
+    if all(x == 0 for x in src) and any(x != 0 for x in tgt):
+        return None
+
+    # Zero -> zero: identity works.
+    if all(x == 0 for x in src) and all(x == 0 for x in tgt):
+        return [[int(i == j) for j in range(r)] for i in range(r)]
+
+    row_candidates = []
+    for i in range(r):
+        n_i = moduli[i]
+        opts_per_j = [endo_entry_options(p, lambdas[i], lambdas[j]) for j in range(r)]
+        candidates_i = []
+        for entries in product(*opts_per_j):
+            row = list(entries)
+            dot = sum(row[j] * src[j] for j in range(r)) % n_i
+            if dot == tgt[i]:
+                candidates_i.append(tuple(row))
+        row_candidates.append(candidates_i)
+
+    def backtrack(i, current_rows, current_rows_mod_p):
+        if i == r:
+            return [list(row) for row in current_rows]
+
+        prev_rank = rank_mod_p(current_rows_mod_p, p)
+
+        for row in row_candidates[i]:
+            row_mod_p = tuple(c % p for c in row)
+            if all(c == 0 for c in row_mod_p):
+                continue
+            new_rows_mod_p = current_rows_mod_p + [row_mod_p]
+            new_rank = rank_mod_p(new_rows_mod_p, p)
+            if new_rank != prev_rank + 1:
+                continue
+
+            result = backtrack(i + 1, current_rows + [row], new_rows_mod_p)
+            if result is not None:
+                return result
+
+        return None
+
+    return backtrack(0, [], [])
+
+
+# ---------- 5) Main function: push to lex-minimal ----------
+
+def push_to_lex_minimal(p, lambdas, v):
+    """
+    Given a p-group described by (p, lambdas) and a vector v,
+    find an automorphism A such that A*v is the lexicographically minimal
+    element in the Aut(G)-orbit of v.
+
+    Returns:
+        A : list of rows (each a list of ints), the automorphism matrix.
+    """
+    lambdas = tuple(lambdas)
+    r = len(lambdas)
+    moduli = [p ** lam for lam in lambdas]
+
+    if len(v) != r:
+        raise ValueError("Vector length must match number of factors.")
+
+    v_norm = tuple(int(v_i) % n_i for v_i, n_i in zip(v, moduli))
+
+    if all(x == 0 for x in v_norm):
+        return [[int(i == j) for j in range(r)] for i in range(r)]
+
+    ord_v = element_order_p_group(p, lambdas, v_norm)
+
+    candidates = lex_minimal_vectors(p, lambdas)
+
+    for w in candidates:
+        if element_order_p_group(p, lambdas, w) != ord_v:
+            continue
+
+        A = _automorphism_sending_vector(p, lambdas, v_norm, tuple(w))
+        if A is not None:
+            return A
+
+    raise RuntimeError("No automorphism found mapping v to a lex-minimal representative.")
+
+
+# ---------- 6) Equivalence under shifts on a general abelian group ----------
+
+def is_single_equivalence_class_under_shifts(Z_wt, X_wt, prime_powers, vectors):
+    """
+    Given:
+        Z_wt, X_wt : nonnegative integers with len(vectors) == Z_wt + X_wt
+        prime_powers: [n1, ..., nr], each ni a prime power (primes may differ)
+        vectors     : list of group elements, each an iterable of length r
+
+    We consider the group G = oplus_i Z/ni Z and an equivalence relation generated by:
+
+      For each v ∈ G, form
+          S(v) = { vectors[i] + v   for i in range(Z_wt) }
+               U { vectors[i] - v   for i in range(Z_wt, Z_wt + X_wt) }
+
+      (operations done component-wise modulo ni).
+      All elements of S(v) are declared equivalent.
+
+    The function returns True iff this equivalence relation has exactly ONE
+    equivalence class (i.e. the whole group is identified), and False otherwise.
+    """
+
+    r = len(prime_powers)
+    for n in prime_powers:
+        factor_prime_power(n)  # will raise if not a prime power
+
+    if len(vectors) != Z_wt + X_wt:
+        raise ValueError("len(vectors) must be exactly Z_wt + X_wt.")
+
+    base_vectors = []
+    for v in vectors:
+        if len(v) != r:
+            raise ValueError("Each vector must have length equal to the number of group factors.")
+        base_vectors.append(
+            tuple(int(v_i) % n_i for v_i, n_i in zip(v, prime_powers))
+        )
+
+    from itertools import product
+
+    elems = list(product(*(range(n_i) for n_i in prime_powers)))
     index_of = {e: i for i, e in enumerate(elems)}
     N = len(elems)
 
-    parent = list(range(N))
-    rank = [0] * N
+    class DSU:
+        def __init__(self, n):
+            self.parent = list(range(n))
+            self.rank = [0] * n
 
-    def find(x: int) -> int:
-        while parent[x] != x:
-            parent[x] = parent[parent[x]]
-            x = parent[x]
-        return x
+        def find(self, x):
+            while self.parent[x] != x:
+                self.parent[x] = self.parent[self.parent[x]]
+                x = self.parent[x]
+            return x
 
-    def union(a: int, b: int):
-        ra = find(a)
-        rb = find(b)
-        if ra == rb:
-            return
-        if rank[ra] < rank[rb]:
-            ra, rb = rb, ra
-        parent[rb] = ra
-        if rank[ra] == rank[rb]:
-            rank[ra] += 1
+        def union(self, a, b):
+            ra = self.find(a)
+            rb = self.find(b)
+            if ra == rb:
+                return
+            if self.rank[ra] < self.rank[rb]:
+                ra, rb = rb, ra
+            self.parent[rb] = ra
+            if self.rank[ra] == self.rank[rb]:
+                self.rank[ra] += 1
+
+    dsu = DSU(N)
 
     for v in elems:
         S_v = []
@@ -487,10 +546,10 @@ def is_single_equivalence_class_under_shifts(
 
         base_idx = index_of[S_v[0]]
         for w in S_v[1:]:
-            union(base_idx, index_of[w])
+            dsu.union(base_idx, index_of[w])
 
-    root0 = find(0)
+    root0 = dsu.find(0)
     for i in range(1, N):
-        if find(i) != root0:
+        if dsu.find(i) != root0:
             return False
     return True
