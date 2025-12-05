@@ -12,9 +12,9 @@ sortedCodes = [[[] for j in range(101)] for i in range(51)]
 CSScodes = [[[] for j in range(101)] for i in range(51)]
 for i in codes:
     if i[2] >= 0:
-        sortedCodes[i[2]][i[1]] += [i[0]]
+        sortedCodes[int(2 * i[2])][i[1]] += [i[0]]
         if i[3]:
-            CSScodes[i[2]][i[1]] += [i[0]]
+            CSScodes[int(2 * i[2])][i[1]] += [i[0]]
 filtered = []
 for d in range(51):
     for k in range(101):
@@ -23,7 +23,7 @@ for d in range(51):
             best = True
             for code2 in codes:
                 n = code
-                n2, k2, d2 = code2[0], code2[1], code2[2]
+                n2, k2, d2 = code2[0], code2[1], 2 * code2[2]
                 if (n2 <= n and k2 * n >= k * n2 and d2 >= d and
                     (n2 < n or k2 * n > k * n2 or d2 > d)):
                     if k2 * n == k * n2 and d2 == d and 4 * k2 >= k:
@@ -31,5 +31,5 @@ for d in range(51):
                     best = False
                     break
             if best:
-                filtered += [(n, k, d, n in CSScodes[d][k])]
+                filtered += [(n, k, d // 2 + (0 if d % 2 == 0 else 0.5), n in CSScodes[d][k])]
 print(filtered)
