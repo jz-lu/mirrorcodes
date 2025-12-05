@@ -216,7 +216,7 @@ def main(args):
                         start = min(width * r, len(in_data))
                         end = min(width * (r + 1), len(in_data))
                         in_data = in_data[start : end]
-                    out_data = stage3(n, in_data, t = time, verbose = VERBOSE)
+                    out_data = stage3(n, in_data, t = time, verbose = VERBOSE, estimate=est)
                 elif stage == 4:
                     out_data = stage4(n, in_data)
             
