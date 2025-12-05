@@ -197,7 +197,7 @@ def distance_estimate(stim_stab_tableau):
     return len(circuit.search_for_undetectable_logical_errors(
         dont_explore_detection_event_sets_with_size_above=8,
         dont_explore_edges_with_degree_above=6,
-        dont_explore_edges_increasing_symptom_degree=False))
+        dont_explore_edges_increasing_symptom_degree=False)) - 0.5
 
 
 def distance(stim_stab_tableau, IS_CSS = False, verbose = True):

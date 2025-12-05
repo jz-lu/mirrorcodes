@@ -73,7 +73,7 @@ def stage2(n:int, codes:list, verbose:bool = False):
     return passing_codes
 
 
-def worker(queue, code):
+def worker(queue, code, estimate):
     """
     Worker method for slow operation.
 
@@ -82,13 +82,16 @@ def worker(queue, code):
         * code (tuple): code whose distance we want to find
     """
     try:
-        result = code.get_d()
+        if estimate:
+            result = code.get_d_est()
+        else:
+            result = code.get_d()
         queue.put(("ok", result))
     except Exception as e:
         queue.put(("err", e))
 
 
-def stage3(n:int, codes:list, t:int = 3, verbose:bool = False):
+def stage3(n:int, codes:list, t:int = 3, verbose:bool = False, estimate:bool = False):
     """
     Stage 3 filtering. 
 
@@ -111,7 +114,7 @@ def stage3(n:int, codes:list, t:int = 3, verbose:bool = False):
         d = -1
         
         queue = mp.Queue()
-        process = mp.Process(target = worker, args = (queue, code))
+        process = mp.Process(target = worker, args = (queue, code, estimate))
         process.start()
         process.join(t)
         if process.is_alive():
@@ -153,6 +156,7 @@ def main(args):
     SAVE_DATA = not args.nosave
     in_directory = args.input
     out_directory = args.output
+    est = args.estimate
     if out_directory is None:
         out_directory = in_directory
     Z_wt = args.Zweight
@@ -167,6 +171,8 @@ def main(args):
     mink = args.mink
     if mink is None:
         mink = 3
+    if est is None:
+        est = False
     stages = args.stages
     n = args.size
     r = args.range
@@ -299,6 +305,12 @@ if __name__ == "__main__":
         "--verbose", "-v",
         action="store_true",
         help="Include print statements"
+    )
+
+    parser.add_argument(
+        "--estimate", "-e",
+        action="store_true",
+        help="Estimate distance instead of computing exactly. Will underreport by 0.5"
     )
 
     parser.add_argument(
