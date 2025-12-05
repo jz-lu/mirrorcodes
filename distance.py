@@ -195,7 +195,7 @@ def circuit_from_tableau(stim_stab_tableau):
 def distance_estimate(stim_stab_tableau):
     circuit = circuit_from_tableau(stim_stab_tableau)
     return len(circuit.search_for_undetectable_logical_errors(
-        dont_explore_detection_event_sets_with_size_above=12,
+        dont_explore_detection_event_sets_with_size_above=8,
         dont_explore_edges_with_degree_above=6,
         dont_explore_edges_increasing_symptom_degree=False))
 
