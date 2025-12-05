@@ -15,7 +15,7 @@ import itertools as it
 import numpy as np
 from util import find_isos, find_strides, shift_X
 from util import binary_rank, symp2Pauli, stimify_symplectic
-from distance import distance
+from distance import distance, distance_estimate
 import stim
 
 
@@ -438,7 +438,7 @@ class MirrorCode():
     The optional variables can be specified if they are precomputed. If they are
     not specified, they are computed by the class functions the first time they are queried.
     """
-    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None):
+    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None, d_est=None):
         self.group = group
         self.z0 = np.array(z0, dtype = int)
         self.x0 = np.array(x0, dtype = int)
@@ -451,6 +451,7 @@ class MirrorCode():
         self.n = int(n) if n is not None else None
         self.k = k
         self.d = d
+        self.d_est = d_est
 
     def get_stabilizers(self):
         if self.stabilizers is None:
@@ -478,6 +479,15 @@ class MirrorCode():
             assert self.CSS is not None, f"You screwed up somewhere?"
             self.d = distance(tableau, self.CSS, verbose=verbose)
         return self.d
+    
+    def get_d_est(self):
+        if self.d_est is None:
+            if self.d is None:
+                tableau = self.get_stim_tableau()
+                self.d_est = distance_estimate(tableau)
+            else:
+                self.d_est = self.d
+        return self.d_est
     
     def is_CSS(self):
         if self.CSS is None:

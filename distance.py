@@ -182,6 +182,24 @@ def stab_make_circuit(stabilizers, logical_paulis):
 
     return circuit
 
+
+def circuit_from_tableau(stim_stab_tableau):
+    stabilizers, obs_xs, obs_zs = make_code(stim_stab_tableau)
+    r = len(stabilizers); k = len(obs_xs) # r = num stabs = n - k
+    obs = [*obs_xs, *obs_zs]
+    t0 = time.monotonic()
+    assert k == len(obs_zs), f"There should always be the same number of logical X's and Z's"
+    return stab_make_circuit(stabilizers, obs)
+
+
+def distance_estimate(stim_stab_tableau):
+    circuit = circuit_from_tableau(stim_stab_tableau)
+    return len(circuit.search_for_undetectable_logical_errors(
+        dont_explore_detection_event_sets_with_size_above=12,
+        dont_explore_edges_with_degree_above=6,
+        dont_explore_edges_increasing_symptom_degree=False))
+
+
 def distance(stim_stab_tableau, IS_CSS = False, verbose = True):
     """
     Calculate the distance of a stabilizer code.
