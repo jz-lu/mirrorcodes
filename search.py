@@ -384,6 +384,24 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
     Finds all codes of weights Z_wt and X_wt for a given group.
 
     group: tuple of prime powers.
+
+    Memory-optimised version:
+      - Decomposes the group into prime blocks.
+      - For each block, loads:
+          * codes_block : list of candidate block codes (matrices)
+          * block_spos  : (#cands, #perms) signed positions
+      - Runs a DFS over choices of one candidate per block.
+        Each DFS state stores ONLY:
+          * idx_tuple: a tuple of candidate indices (one per processed block)
+          * spos_agg: aggregated signed-position vector across those blocks
+      - Only at DFS leaves (all blocks chosen) do we reconstruct the full
+        code (concatenating columns) and build MirrorCode objects.
+
+    Early pruning:
+      - At an intermediate DFS state, if any entry of spos_agg is -1,
+        we prune that branch. In our encoding, -1 means the earliest
+        non-zero sign is -1 at coordinate 1, which can never be fixed
+        by adding more blocks.
     """
     group = tuple(group)
     total = Z_wt + X_wt
@@ -408,66 +426,102 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
 
     perms = get_perms(Z_wt, X_wt)
     num_perms = len(perms)
+    num_blocks = len(blocks)
 
-    # (vecs, spos_agg)
-    codes = [
-        (
-            np.zeros((total, 0), dtype=np.int16),
-            np.zeros(num_perms, dtype=np.int8),
-        )
-    ]
-
+    # Preload all blocks' codes and signed positions once
+    # blocks_data[b] = (codes_block_b, block_spos_b)
+    #   codes_block_b : list of np.ndarray, each (total, len(block_b))
+    #   block_spos_b  : np.ndarray (num_cands_b, num_perms), int8
+    blocks_data = []
     for block in blocks:
         codes_block, block_spos = _subgroup_codes_and_bins(Z_wt, X_wt, block)
         if not codes_block:
             return []
+        codes_block = [np.asarray(code, dtype=np.int16) for code in codes_block]
+        block_spos = np.asarray(block_spos, dtype=np.int8)
+        blocks_data.append((codes_block, block_spos))
 
-        new_codes = []
-        for vecs, spos_agg in codes:
-            for idx, code2 in enumerate(codes_block):
-                spos_blk = block_spos[idx]
+    good = []
 
-                new_spos = spos_agg.copy()
+    def dfs(block_index, idx_tuple, spos_agg):
+        """
+        DFS over blocks:
 
-                blk_nonzero = (spos_blk != 0)
-                if np.any(blk_nonzero):
-                    agg_nonzero = (spos_agg != 0)
+        block_index : which block we're choosing a candidate for now
+        idx_tuple   : tuple of candidate indices chosen for blocks [0..block_index-1]
+        spos_agg    : aggregated signed positions across those blocks
+        """
+        # If we've assigned all blocks, evaluate the full code
+        if block_index == num_blocks:
+            # Final sign filter: any negative signed position kills the code
+            # (earliest nonzero sign is - at some coordinate).
+            if np.any(spos_agg < 0):
+                return
 
-                    idx1 = (~agg_nonzero) & blk_nonzero
-                    new_spos[idx1] = spos_blk[idx1]
+            # Reconstruct full vecs by concatenating block codes along columns
+            vecs_parts = []
+            for b, cand_idx in enumerate(idx_tuple):
+                codes_block_b, _ = blocks_data[b]
+                vecs_parts.append(codes_block_b[cand_idx])
+            vecs = np.concatenate(vecs_parts, axis=1)  # shape (total, len(group))
 
-                    idx2 = agg_nonzero & blk_nonzero
+            z_part = vecs[:Z_wt]
+            x_part = vecs[Z_wt:]
+
+            # Z and X rows must be distinct
+            if len(np.unique(z_part, axis=0)) != Z_wt:
+                return
+            if len(np.unique(x_part, axis=0)) != X_wt:
+                return
+
+            code = MirrorCode(group, z_part, x_part)
+            k_val = code.get_k()
+            if k_val < min_k:
+                return
+
+            good.append((code, k_val))
+            return
+
+        # Otherwise, choose a candidate for this block
+        codes_block, block_spos = blocks_data[block_index]
+        num_block_cands = block_spos.shape[0]
+
+        for cand_idx in range(num_block_cands):
+            spos_blk = block_spos[cand_idx]  # shape (num_perms,)
+
+            # Combine signed positions:
+            #   - If aggregate is zero and block non-zero: take block.
+            #   - If both non-zero: take the earlier (smaller |pos|).
+            new_spos = spos_agg.copy()
+            blk_nonzero = (spos_blk != 0)
+            if np.any(blk_nonzero):
+                agg_nonzero = (spos_agg != 0)
+
+                # Case 1: previously zero, block non-zero -> take block
+                idx1 = (~agg_nonzero) & blk_nonzero
+                new_spos[idx1] = spos_blk[idx1]
+
+                # Case 2: both non-zero -> take earlier position
+                idx2 = agg_nonzero & blk_nonzero
+                if np.any(idx2):
                     pos_agg = np.abs(spos_agg)
                     pos_blk = np.abs(spos_blk)
                     earlier = pos_blk < pos_agg
                     idx2 &= earlier
                     new_spos[idx2] = spos_blk[idx2]
 
-                combined_vecs = np.concatenate((vecs, code2), axis=1)
-                new_codes.append((combined_vecs, new_spos))
+            # Early prune:
+            # In our signed-position encoding, -1 means earliest nonzero sign
+            # is at coordinate 1 and is negative. No later block can introduce
+            # a difference at a coordinate < 1 or override that, so this branch
+            # can never yield a valid code.
+            if np.any(new_spos == -1):
+                continue
 
-        if not new_codes:
-            return []
-        codes = new_codes
+            dfs(block_index + 1, idx_tuple + (cand_idx,), new_spos)
 
-    good = []
-    for vecs, spos_agg in codes:
-        if np.any(spos_agg < 0):
-            continue
-
-        z_part = vecs[:Z_wt]
-        x_part = vecs[Z_wt:]
-
-        if len(np.unique(z_part, axis=0)) != Z_wt:
-            continue
-        if len(np.unique(x_part, axis=0)) != X_wt:
-            continue
-
-        code = MirrorCode(group, z_part, x_part)
-        k_val = code.get_k()
-        if k_val < min_k:
-            continue
-        good.append((code, k_val))
+    # Start DFS with no blocks chosen and all-zero sign vector
+    dfs(0, tuple(), np.zeros(num_perms, dtype=np.int8))
 
     if not good:
         return []
