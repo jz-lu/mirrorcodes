@@ -43,11 +43,12 @@ def get_perms(Z_wt: int, X_wt: int):
 # 1) Non-isomorphic abelian groups
 # ============================================================
 
+@lru_cache(maxsize=None)
 def n_partitions(n):
     """
     Find all non-isomorphic abelian groups of n qubits.
 
-    Returns a list of tuples of prime powers whose product is n.
+    Returns a tuple of tuples of prime powers whose product is n.
     """
     primes = []
     powers = []
@@ -65,7 +66,7 @@ def n_partitions(n):
             for k in part:
                 group_sizes.append(p ** k)
         result.append(tuple(group_sizes))
-    return result
+    return tuple(result)
 
 
 # ============================================================
@@ -130,12 +131,12 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
                     candidates[-1] = lex_min
                 else:
                     # At depth == Z_wt, enforce the small-weight rule
-                    for v in lex_min:
-                        if v.max() > (1 if p == 2 else 0):
+                    for v_vec in lex_min:
+                        if v_vec.max() > (1 if p == 2 else 0):
                             if p > 2:
                                 break
                         else:
-                            candidates[-1].append(v)
+                            candidates[-1].append(v_vec)
             else:
                 # Nontrivial constraints: use automorphisms_fixing_vectors with Z_wt
                 isos, shifts = automorphisms_fixing_vectors(p, lambdas, Z_wt, fixed)
@@ -190,7 +191,7 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
 
 
 # ============================================================
-# 3) Permutation bins (signed position)
+# 3) Permutation bins (signed position, vectorized over automorphisms)
 # ============================================================
 
 def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
@@ -223,7 +224,9 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
     block_spos = np.zeros((num_cands, num_perms), dtype=np.int8)
 
     for cand_ind, cand in enumerate(candidates):
-        cand = np.asarray(cand, dtype=np.int16)
+        cand = np.asarray(cand, dtype=np.int64)
+        # Precompute base lex values for cand rows
+        base_lex = (cand @ strides).astype(int)
 
         # Precompute automorphisms (and shifts) for prefixes of cand:
         # prefix i means we fix cand[0], ..., cand[i-1]
@@ -242,21 +245,25 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
         for perm_ind in range(num_perms):
             perm = perms_np[perm_ind]
 
-            # Reorder and normalise by translation
+            # Reorder and normalise by translation so that first row is zero
             c = cand[perm] - cand[perm[0]]
 
             for i in range(1, total):
-                base_vec = cand[i]
-                base = int(strides @ base_vec)
+                base = int(base_lex[i])
 
                 if all_zero[i]:
+                    # No constraints yet: just push c[i] to lex-minimal
                     A = push_to_lex_minimal(p, lambdas, c[i])
-                    img = (A @ c[i]) % subgroup_np
+                    A_np = np.array(A, dtype=np.int64)
+                    img = (A_np @ c[i]) % subgroup_np
                     if i == Z_wt:
-                        img = img % (2 if p == 2 else 1)
-                    min_iso = A
+                        if p == 2:
+                            img = img % 2
+                        else:
+                            img = img % 1
+                    min_iso = A_np
                     min_shift = np.zeros_like(c[i])
-                    min_val = int(strides @ img)
+                    min_val = int(img @ strides)
                 else:
                     aut_pair = prefix_auts[i]
                     if aut_pair is None:
@@ -265,30 +272,33 @@ def permutation_bins(Z_wt, X_wt, subgroup, perms, candidates):
                     if isos.size == 0:
                         break
 
-                    min_val = 1e9
-                    min_iso = None
-                    min_shift = None
-                    for iso, shift in zip(isos, shifts):
-                        img = (iso @ c[i] - shift) % subgroup_np
-                        if i == Z_wt:
-                            img = img % (2 if p == 2 else 1)
-                        img_val = int(strides @ img)
-                        if img_val < min_val:
-                            min_val = img_val
-                            min_iso = iso
-                            min_shift = shift
-                    
+                    # Vectorised search over automorphisms
+                    # imgs shape: (#isos, r)
+                    imgs = (isos @ c[i]) - shifts
+                    imgs %= subgroup_np
+                    if i == Z_wt:
+                        if p == 2:
+                            imgs = imgs % 2
+                        else:
+                            imgs = imgs % 1
+                    lex_vals = imgs @ strides
+                    min_idx = int(np.argmin(lex_vals))
+                    min_val = int(lex_vals[min_idx])
+                    min_iso = isos[min_idx]
+                    min_shift = shifts[min_idx]
+
+                # Apply chosen automorphism + shift to all rows
                 c = ((min_iso @ c.T).T - min_shift) % subgroup_np
+
                 if i == Z_wt:
-                    # For p=2, we still normalise X rows by subtracting the "even" offset
+                    # For p=2, normalise X-rows by subtracting even offset
                     if p == 2:
                         offset = c[Z_wt] - (c[Z_wt] % 2)
                         c[Z_wt:] = (c[Z_wt:] - offset) % subgroup_np
                     else:
                         c[Z_wt:] = (c[Z_wt:] - c[Z_wt]) % subgroup_np
-                    
-                diff = min_val - base
 
+                diff = min_val - base
                 if diff > 0:
                     sign = 1
                 elif diff < 0:
@@ -507,7 +517,7 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
 # ============================================================
 
 def main():
-    for i in range(29):
+    for i in range(31):
         print(i, len(find_all_codes(i, 3, 3)))
 
 
