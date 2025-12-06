@@ -39,6 +39,37 @@ def get_perms(Z_wt: int, X_wt: int):
     return tuple(perms)
 
 
+@lru_cache(maxsize=None)
+def _get_perm_data(Z_wt: int, X_wt: int):
+    """
+    Precompute permutation data for this (Z_wt, X_wt):
+
+      * perms            : tuple of permutations (same as get_perms)
+      * perms_np         : numpy array of shape (num_perms, total)
+      * groups_by_depth  : tuple of length `total`, where
+          groups_by_depth[i] is a list of numpy arrays of permutation
+          indices. Each array is a group of perms that share the same
+          prefix (perm[0], ..., perm[i]) (i.e. prefix length i+1).
+
+    This depends only on Z_wt and X_wt, not on the candidate or subgroup,
+    so we can reuse it across all calls to permutation_bins.
+    """
+    perms = get_perms(Z_wt, X_wt)
+    perms_np = np.array(perms, dtype=int)
+    total = Z_wt + X_wt
+
+    groups_by_depth = [None] * total
+    for i in range(1, total):
+        prefix_to_inds = {}
+        for idx, perm in enumerate(perms):
+            key = perm[: i + 1]  # prefix of length i+1
+            prefix_to_inds.setdefault(key, []).append(idx)
+        # Store each group as a numpy array of indices
+        groups_by_depth[i] = [np.array(v, dtype=np.int32) for v in prefix_to_inds.values()]
+
+    return perms, perms_np, tuple(groups_by_depth)
+
+
 # ============================================================
 # 1) Non-isomorphic abelian groups
 # ============================================================
@@ -217,17 +248,19 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates):
     where 1 <= k <= total-1 and total = Z_wt + X_wt.
 
     Optimisation:
-      * Permutations are generated internally via `get_perms(Z_wt, X_wt)`.
+      * Permutations and their prefix groups are generated once via
+        `_get_perm_data(Z_wt, X_wt)`, so we avoid repeated `np.unique`
+        calls per candidate and per depth.
       * For each candidate, and for each coordinate i = 1..total-1, we:
-          - group all *unassigned* permutations by their prefix
-            (perm[0], ..., perm[i]);
-          - run the original algorithm up to i once on a single representative
-            of each prefix group;
-          - reuse that earliest sign (if nonzero) for all permutations in that
+          - take the precomputed groups of perms that share the same
+            prefix (perm[0], ..., perm[i]);
+          - restrict each group to still-unassigned perms;
+          - run the original algorithm up to i once on a single
+            representative of each non-empty group;
+          - reuse that earliest sign (if nonzero) for all perms in the
             group.
-      * This reuse is mathematically safe because, for a fixed candidate, the
-        behaviour up to coordinate i depends only on the permutation prefix
-        perm[0..i].
+      * This reuse is mathematically safe because, for a fixed candidate,
+        the behaviour up to coordinate i depends only on perm[0..i].
     """
     subgroup = tuple(subgroup)
     factors = [list(primefac(s)) for s in subgroup]
@@ -237,14 +270,13 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates):
     subgroup_np = np.array(subgroup, dtype=int)
 
     total = Z_wt + X_wt
-    perms = get_perms(Z_wt, X_wt)
+    perms, perms_np, groups_by_depth = _get_perm_data(Z_wt, X_wt)
     num_perms = len(perms)
 
     num_cands = len(candidates)
     if num_cands == 0 or num_perms == 0:
         return np.zeros((num_cands, num_perms), dtype=np.int8)
 
-    perms_np = np.array(perms, dtype=int)
     block_spos = np.zeros((num_cands, num_perms), dtype=np.int8)
 
     def _earliest_sign_up_to_i(cand_np, base_lex, prefix_auts, all_zero,
@@ -341,36 +373,21 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates):
 
         assigned = np.zeros(num_perms, dtype=bool)
 
-        # For each coordinate i, group unassigned permutations by their prefix
-        # (perm[0], ..., perm[i]) and process one representative per group.
+        # For each coordinate i, use precomputed groups of perms with the same prefix
         for i in range(1, total):
             remaining = np.where(~assigned)[0]
             if remaining.size == 0:
                 break
 
-            # Build groups of remaining permutations that share prefix length i+1
-            groups = [remaining]
-            for pos in range(0, i + 1):
-                new_groups = []
-                for g in groups:
-                    if g.size == 0:
-                        continue
-                    vals = perms_np[g, pos]
-                    uniq, inv = np.unique(vals, return_inverse=True)
-                    for u_idx in range(len(uniq)):
-                        members = g[inv == u_idx]
-                        if members.size > 0:
-                            new_groups.append(members)
-                groups = new_groups
-
-            # Now each group is a set of perms with identical prefix perm[0..i]
+            groups = groups_by_depth[i]
             for g in groups:
-                # Filter out perms that might have been assigned in this i-loop
-                g = g[~assigned[g]]
-                if g.size == 0:
+                # Restrict to still-unassigned perms in this group
+                mask = ~assigned[g]
+                if not np.any(mask):
                     continue
+                g_unassigned = g[mask]
 
-                rep_idx = int(g[0])
+                rep_idx = int(g_unassigned[0])
                 perm_vec = perms_np[rep_idx]
 
                 sign, pos = _earliest_sign_up_to_i(
@@ -384,10 +401,10 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates):
 
                 if sign != 0:
                     val = np.int8(sign * pos)
-                    block_spos[cand_ind, g] = val
-                    assigned[g] = True
-                # If sign == 0, we leave these perms unassigned and they will
-                # be considered at the next coordinate i+1.
+                    block_spos[cand_ind, g_unassigned] = val
+                    assigned[g_unassigned] = True
+                # If sign == 0, we leave these perms unassigned and they
+                # will be considered at the next coordinate i+1.
 
     return block_spos
 
@@ -475,11 +492,15 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
       - Only at DFS leaves (all blocks chosen) do we reconstruct the full
         code (concatenating columns) and build MirrorCode objects.
 
-    Early pruning:
-      - At an intermediate DFS state, if any entry of spos_agg is -1,
-        we prune that branch. In our encoding, -1 means the earliest
-        non-zero sign is -1 at coordinate 1, which can never be fixed
-        by adding more blocks.
+    Extra pruning:
+      - For each block and permutation, precompute the *best possible*
+        positive coordinate (if any). From that we derive, for each DFS
+        depth, the best future positive coordinate available.
+      - If at some DFS state, for a permutation p we have a current
+        negative earliest sign at coordinate k and even in the best case
+        across all remaining blocks we cannot get a positive sign at a
+        coordinate < k, then no completion of this branch can yield a
+        valid code, and we prune that branch immediately.
     """
     group = tuple(group)
     total = Z_wt + X_wt
@@ -517,6 +538,40 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
         block_spos = np.asarray(block_spos, dtype=np.int8)
         blocks_data.append((codes_block, block_spos))
 
+    # ------------------------------------------------------------
+    # Precompute best possible positive coordinate per block/perm
+    # and the best from any future block.
+    #
+    # best_pos[b, p]  = min k>0 over candidates with +k at perm p
+    #                   or 0 if no positive sign is ever possible.
+    # best_from[b, p] = min_{b' >= b} best_pos[b', p]
+    #               (best possible positive from block b or later).
+    # ------------------------------------------------------------
+    best_pos = np.zeros((num_blocks, num_perms), dtype=np.uint8)
+
+    for b, (_, block_spos) in enumerate(blocks_data):
+        # block_spos shape: (num_cands_b, num_perms), int8
+        # We want the minimum positive k per perm.
+        bs = block_spos
+        # Use 127 as a sentinel (since coords <= total-1 <= 255 but we store in uint8).
+        # First work in int16 to avoid int8 overflow weirdness.
+        arr = np.where(bs > 0, bs.astype(np.int16), 127)
+        min_pos = arr.min(axis=0)  # int16
+        # Convert to uint8, map sentinel back to 0 ("no positive available").
+        min_pos_u8 = min_pos.astype(np.uint8)
+        min_pos_u8[min_pos_u8 == 127] = 0
+        best_pos[b, :] = min_pos_u8
+
+    # best_from[b, p] = best positive from blocks b, b+1, ...
+    best_from = np.zeros((num_blocks + 1, num_perms), dtype=np.uint8)
+    # Row num_blocks (no future blocks) is all zeros by construction.
+    # Fill backwards.
+    for b in range(num_blocks - 1, -1, -1):
+        if b == num_blocks - 1:
+            best_from[b, :] = best_pos[b, :]
+        else:
+            best_from[b, :] = np.minimum(best_pos[b, :], best_from[b + 1, :])
+
     good = []
 
     def dfs(block_index, idx_tuple, spos_agg):
@@ -530,7 +585,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
         # If we've assigned all blocks, evaluate the full code
         if block_index == num_blocks:
             # Final sign filter: any negative signed position kills the code
-            if np.any(spos_agg < 0):
+            if (spos_agg < 0).any():
                 return
 
             # Reconstruct full vecs by concatenating block codes along columns
@@ -561,37 +616,55 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
         codes_block, block_spos = blocks_data[block_index]
         num_block_cands = block_spos.shape[0]
 
+        # Best future positives from *later* blocks
+        future_best = best_from[block_index + 1]  # shape (num_perms,)
+
         for cand_idx in range(num_block_cands):
             spos_blk = block_spos[cand_idx]  # shape (num_perms,)
 
-            # Combine signed positions:
-            #   - If aggregate is zero and block non-zero: take block.
-            #   - If both non-zero: take earlier position.
-            new_spos = spos_agg.copy()
             blk_nonzero = (spos_blk != 0)
-            if np.any(blk_nonzero):
+            if not blk_nonzero.any():
+                # This block doesn't change any signs at all
+                new_spos = spos_agg
+            else:
                 agg_nonzero = (spos_agg != 0)
+                new_spos = spos_agg.copy()
 
                 # Case 1: previously zero, block non-zero -> take block
                 idx1 = (~agg_nonzero) & blk_nonzero
-                new_spos[idx1] = spos_blk[idx1]
+                if idx1.any():
+                    blk1 = spos_blk[idx1]
+                    # A fresh -1 here means earliest negative at coord 1,
+                    # which can never be fixed (no j < 1). Immediate prune.
+                    if (blk1 == -1).any():
+                        continue
+                    new_spos[idx1] = blk1
 
                 # Case 2: both non-zero -> take earlier position
                 idx2 = agg_nonzero & blk_nonzero
-                if np.any(idx2):
+                if idx2.any():
                     pos_agg = np.abs(spos_agg)
                     pos_blk = np.abs(spos_blk)
                     earlier = pos_blk < pos_agg
-                    idx2 &= earlier
-                    new_spos[idx2] = spos_blk[idx2]
+                    idx_update = idx2 & earlier
+                    if idx_update.any():
+                        blk2 = spos_blk[idx_update]
+                        # Again, a new -1 at coord 1 is hopeless.
+                        if (blk2 == -1).any():
+                            continue
+                        new_spos[idx_update] = blk2
 
-            # Early prune:
-            # In our signed-position encoding, -1 means earliest nonzero sign
-            # is at coordinate 1 and is negative. No later block can introduce
-            # a difference at a coordinate < 1 or override that, so this branch
-            # can never yield a valid code.
-            if np.any(new_spos == -1):
-                continue
+            # Extra pruning: check if any negative entry can ever be fixed
+            neg_mask = new_spos < 0
+            if neg_mask.any():
+                k = np.abs(new_spos).astype(np.uint8)        # coordinate of earliest sign
+                fb = future_best                             # best future positive
+                # For perms where we already have a negative earliest sign:
+                # if fb == 0 => no future positive possible
+                # or fb >= k => no future positive at a *earlier* coordinate
+                cannot_fix = neg_mask & ((fb == 0) | (fb >= k))
+                if cannot_fix.any():
+                    continue
 
             dfs(block_index + 1, idx_tuple + (cand_idx,), new_spos)
 
