@@ -6,6 +6,7 @@ Search for good mirror codes.
 import itertools as it
 import os
 import pickle
+import time
 from functools import lru_cache
 
 import numpy as np
@@ -19,6 +20,13 @@ from isomorphism import (
 )
 from mirror import MirrorCode
 from util import find_strides, index_to_array, partitions
+
+
+# ============================================================
+# Global time limit (per run) for checkpointing
+# ============================================================
+
+TIME_LIMIT_SECONDS = 10 * 50  # 10 hours
 
 
 # ============================================================
@@ -37,37 +45,6 @@ def get_perms(Z_wt: int, X_wt: int):
         if max(perm[:Z_wt]) == Z_wt - 1 or (Z_wt == X_wt and min(perm[:Z_wt]) == Z_wt):
             perms.append(tuple(perm))
     return tuple(perms)
-
-
-@lru_cache(maxsize=None)
-def _get_perm_data(Z_wt: int, X_wt: int):
-    """
-    Precompute permutation data for this (Z_wt, X_wt):
-
-      * perms            : tuple of permutations (same as get_perms)
-      * perms_np         : numpy array of shape (num_perms, total)
-      * groups_by_depth  : tuple of length `total`, where
-          groups_by_depth[i] is a list of numpy arrays of permutation
-          indices. Each array is a group of perms that share the same
-          prefix (perm[0], ..., perm[i]) (i.e. prefix length i+1).
-
-    This depends only on Z_wt and X_wt, not on the candidate or subgroup,
-    so we can reuse it across all calls to permutation_bins.
-    """
-    perms = get_perms(Z_wt, X_wt)
-    perms_np = np.array(perms, dtype=int)
-    total = Z_wt + X_wt
-
-    groups_by_depth = [None] * total
-    for i in range(1, total):
-        prefix_to_inds = {}
-        for idx, perm in enumerate(perms):
-            key = perm[: i + 1]  # prefix of length i+1
-            prefix_to_inds.setdefault(key, []).append(idx)
-        # Store each group as a numpy array of indices
-        groups_by_depth[i] = [np.array(v, dtype=np.int32) for v in prefix_to_inds.values()]
-
-    return perms, perms_np, tuple(groups_by_depth)
 
 
 # ============================================================
@@ -232,7 +209,7 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
 
 
 # ============================================================
-# 3) Permutation bins (signed position, prefix-group sharing)
+# 3) Permutation bins (signed position, permutations inside)
 # ============================================================
 
 def permutation_bins(Z_wt, X_wt, subgroup, candidates):
@@ -248,19 +225,8 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates):
     where 1 <= k <= total-1 and total = Z_wt + X_wt.
 
     Optimisation:
-      * Permutations and their prefix groups are generated once via
-        `_get_perm_data(Z_wt, X_wt)`, so we avoid repeated `np.unique`
-        calls per candidate and per depth.
-      * For each candidate, and for each coordinate i = 1..total-1, we:
-          - take the precomputed groups of perms that share the same
-            prefix (perm[0], ..., perm[i]);
-          - restrict each group to still-unassigned perms;
-          - run the original algorithm up to i once on a single
-            representative of each non-empty group;
-          - reuse that earliest sign (if nonzero) for all perms in the
-            group.
-      * This reuse is mathematically safe because, for a fixed candidate,
-        the behaviour up to coordinate i depends only on perm[0..i].
+      * Permutations are generated internally via `get_perms(Z_wt, X_wt)`,
+        so we don't recompute or pass them around at every call site.
     """
     subgroup = tuple(subgroup)
     factors = [list(primefac(s)) for s in subgroup]
@@ -270,92 +236,20 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates):
     subgroup_np = np.array(subgroup, dtype=int)
 
     total = Z_wt + X_wt
-    perms, perms_np, groups_by_depth = _get_perm_data(Z_wt, X_wt)
+    perms = get_perms(Z_wt, X_wt)
     num_perms = len(perms)
 
     num_cands = len(candidates)
     if num_cands == 0 or num_perms == 0:
         return np.zeros((num_cands, num_perms), dtype=np.int8)
 
+    perms_np = np.array(perms, dtype=int)
     block_spos = np.zeros((num_cands, num_perms), dtype=np.int8)
 
-    def _earliest_sign_up_to_i(cand_np, base_lex, prefix_auts, all_zero,
-                               perm_vec, i_max):
-        """
-        Run the original permutation_bins inner loop for this candidate+perm,
-        but only up to coordinate i_max. Return (sign, pos) where:
-
-            sign in {-1, 0, +1}
-            pos  in {0, 1, ..., i_max}
-
-        with pos=0 meaning "no non-zero sign up to i_max".
-        """
-        # Initial translation: c[0] = 0, c[j] = cand[perm[j]] - cand[perm[0]]
-        c = cand_np[perm_vec] - cand_np[perm_vec[0]]
-        c = c.copy()  # ensure no aliasing back into cand_np
-
-        limit = min(i_max, total - 1)
-        for i in range(1, limit + 1):
-            base = int(base_lex[i])
-
-            if all_zero[i]:
-                # No constraints yet: just push c[i] to lex-minimal
-                A = push_to_lex_minimal(p, lambdas, c[i])
-                A_np = np.array(A, dtype=np.int64)
-                img = (A_np @ c[i]) % subgroup_np
-                if i == Z_wt:
-                    if p == 2:
-                        img = img % 2
-                    else:
-                        img = img % 1
-                min_iso = A_np
-                min_shift = np.zeros_like(c[i])
-                min_val = int(img @ strides)
-            else:
-                aut_pair = prefix_auts[i]
-                if aut_pair is None:
-                    break
-                isos, shifts = aut_pair
-                if isos.size == 0:
-                    break
-
-                imgs = (isos @ c[i]) - shifts
-                imgs %= subgroup_np
-                if i == Z_wt:
-                    if p == 2:
-                        imgs = imgs % 2
-                    else:
-                        imgs = imgs % 1
-                lex_vals = imgs @ strides
-                min_idx = int(np.argmin(lex_vals))
-                min_val = int(lex_vals[min_idx])
-                min_iso = isos[min_idx]
-                min_shift = shifts[min_idx]
-
-            # Apply chosen automorphism + shift to all rows
-            c = ((min_iso @ c.T).T - min_shift) % subgroup_np
-
-            if i == Z_wt:
-                # For p=2, normalise X-rows by subtracting even offset
-                if p == 2:
-                    offset = c[Z_wt] - (c[Z_wt] % 2)
-                    c[Z_wt:] = (c[Z_wt:] - offset) % subgroup_np
-                else:
-                    c[Z_wt:] = (c[Z_wt:] - c[Z_wt]) % subgroup_np
-
-            diff = min_val - base
-            if diff > 0:
-                return 1, i
-            elif diff < 0:
-                return -1, i
-            # else sign == 0: continue
-
-        return 0, 0
-
     for cand_ind, cand in enumerate(candidates):
-        cand_np = np.asarray(cand, dtype=np.int64)
+        cand = np.asarray(cand, dtype=np.int64)
         # Precompute base lex values for cand rows
-        base_lex = (cand_np @ strides).astype(int)
+        base_lex = (cand @ strides).astype(int)
 
         # Precompute automorphisms (and shifts) for prefixes of cand:
         # prefix i means we fix cand[0], ..., cand[i-1]
@@ -363,7 +257,7 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates):
         all_zero = [False] * total
         for i in range(1, total):
             fixed = tuple(
-                tuple(int(x) for x in cand_np[j])
+                tuple(int(x) for x in cand[j])
                 for j in range(i)
             )
             all_zero[i] = all(all(x == 0 for x in f) for f in fixed)
@@ -371,40 +265,72 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates):
                 isos_i, shifts_i = automorphisms_fixing_vectors(p, lambdas, Z_wt, fixed)
                 prefix_auts[i] = (isos_i, shifts_i)
 
-        assigned = np.zeros(num_perms, dtype=bool)
+        for perm_ind in range(num_perms):
+            perm = perms_np[perm_ind]
 
-        # For each coordinate i, use precomputed groups of perms with the same prefix
-        for i in range(1, total):
-            remaining = np.where(~assigned)[0]
-            if remaining.size == 0:
-                break
+            # Reorder and normalise by translation so that first row is zero
+            c = cand[perm] - cand[perm[0]]
 
-            groups = groups_by_depth[i]
-            for g in groups:
-                # Restrict to still-unassigned perms in this group
-                mask = ~assigned[g]
-                if not np.any(mask):
-                    continue
-                g_unassigned = g[mask]
+            for i in range(1, total):
+                base = int(base_lex[i])
 
-                rep_idx = int(g_unassigned[0])
-                perm_vec = perms_np[rep_idx]
+                if all_zero[i]:
+                    # No constraints yet: just push c[i] to lex-minimal
+                    A = push_to_lex_minimal(p, lambdas, c[i])
+                    A_np = np.array(A, dtype=np.int64)
+                    img = (A_np @ c[i]) % subgroup_np
+                    if i == Z_wt:
+                        if p == 2:
+                            img = img % 2
+                        else:
+                            img = img % 1
+                    min_iso = A_np
+                    min_shift = np.zeros_like(c[i])
+                    min_val = int(img @ strides)
+                else:
+                    aut_pair = prefix_auts[i]
+                    if aut_pair is None:
+                        break
+                    isos, shifts = aut_pair
+                    if isos.size == 0:
+                        break
 
-                sign, pos = _earliest_sign_up_to_i(
-                    cand_np,
-                    base_lex,
-                    prefix_auts,
-                    all_zero,
-                    perm_vec,
-                    i_max=i,
-                )
+                    # Vectorised search over automorphisms
+                    imgs = (isos @ c[i]) - shifts
+                    imgs %= subgroup_np
+                    if i == Z_wt:
+                        if p == 2:
+                            imgs = imgs % 2
+                        else:
+                            imgs = imgs % 1
+                    lex_vals = imgs @ strides
+                    min_idx = int(np.argmin(lex_vals))
+                    min_val = int(lex_vals[min_idx])
+                    min_iso = isos[min_idx]
+                    min_shift = shifts[min_idx]
+
+                # Apply chosen automorphism + shift to all rows
+                c = ((min_iso @ c.T).T - min_shift) % subgroup_np
+
+                if i == Z_wt:
+                    # For p=2, normalise X-rows by subtracting even offset
+                    if p == 2:
+                        offset = c[Z_wt] - (c[Z_wt] % 2)
+                        c[Z_wt:] = (c[Z_wt:] - offset) % subgroup_np
+                    else:
+                        c[Z_wt:] = (c[Z_wt:] - c[Z_wt]) % subgroup_np
+
+                diff = min_val - base
+                if diff > 0:
+                    sign = 1
+                elif diff < 0:
+                    sign = -1
+                else:
+                    sign = 0
 
                 if sign != 0:
-                    val = np.int8(sign * pos)
-                    block_spos[cand_ind, g_unassigned] = val
-                    assigned[g_unassigned] = True
-                # If sign == 0, we leave these perms unassigned and they
-                # will be considered at the next coordinate i+1.
+                    block_spos[cand_ind, perm_ind] = np.int8(sign * i)
+                    break
 
     return block_spos
 
@@ -437,7 +363,31 @@ def _subgroup_cache_filename(Z_wt: int, X_wt: int, block):
     return os.path.join("subgroups", fname)
 
 
-def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block):
+def _subgroup_inprogress_filename(Z_wt: int, X_wt: int, block):
+    """
+    Same naming convention as _subgroup_cache_filename, but under in_progress/.
+    Used to store partial results for (Z_wt, X_wt, block).
+    """
+    block = tuple(block)
+    first = block[0]
+    p = list(primefac(first))[0]
+
+    lambdas = []
+    for n in block:
+        m = n
+        e = 0
+        while m % p == 0:
+            m //= p
+            e += 1
+        lambdas.append(e)
+    exps_str = "_".join(str(e) for e in lambdas)
+
+    os.makedirs("in_progress", exist_ok=True)
+    fname = f"Z{Z_wt}_X{X_wt}_p{p}_l{exps_str}.pkl"
+    return os.path.join("in_progress", fname)
+
+
+def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = None):
     """
     Compute (or load from disk) both the minimal strings and the permutation
     signed-position data for a given (Z_wt, X_wt, block).
@@ -445,63 +395,176 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block):
     Returns:
         codes_block : list of np.ndarray, each shape (Z_wt+X_wt, len(block))
         block_spos  : np.ndarray, shape (num_cands, num_perms), int8
+
+    Disk format (in subgroups/…pkl) is a dict with keys:
+        "codes_block", "block_spos"
+
+    Checkpointing:
+      - If a full result exists in subgroups/, load and return it.
+      - Else, if an in-progress file exists in in_progress/, resume the
+        per-candidate permutation-bin computation from where it left off.
+      - Otherwise, compute minimal_strings_for_subgroup from scratch and then
+        compute permutation bins, one candidate at a time, checking a 10-hour
+        time limit measured from `start_time`.
+      - If the time limit is exceeded during this computation, save the
+        current partial block_spos and the next candidate index to in_progress/,
+        then SystemExit so the batch system can restart us.
+      - Once the computation finishes, save the full result to subgroups/ and
+        remove any in-progress file for this block.
+
+    If start_time is None, it defaults to the current time. When called via
+    find_all_codes / find_all_codes_in_group, a shared start_time is passed
+    down so the 10-hour budget is per overall run.
     """
+    if start_time is None:
+        start_time = time.time()
+
     block = tuple(block)
-    path = _subgroup_cache_filename(Z_wt, X_wt, block)
+    cache_path = _subgroup_cache_filename(Z_wt, X_wt, block)
+    inprog_path = _subgroup_inprogress_filename(Z_wt, X_wt, block)
 
-    if os.path.exists(path):
-        with open(path, "rb") as f:
+    # 1) If we already have the final result, just load and return.
+    if os.path.exists(cache_path):
+        with open(cache_path, "rb") as f:
             data = pickle.load(f)
-        return data["codes_block"], data["block_spos"]
+        codes_block = [np.asarray(code, dtype=np.int16) for code in data["codes_block"]]
+        block_spos = np.asarray(data["block_spos"], dtype=np.int8)
+        return codes_block, block_spos
 
-    codes_block = minimal_strings_for_subgroup(Z_wt, X_wt, block)
-    block_spos = permutation_bins(Z_wt, X_wt, block, codes_block)
+    # 2) Check for an in-progress snapshot.
+    if os.path.exists(inprog_path):
+        with open(inprog_path, "rb") as f:
+            data = pickle.load(f)
+        codes_block = [np.asarray(code, dtype=np.int16) for code in data["codes_block"]]
+        block_spos = np.asarray(data["block_spos"], dtype=np.int8)
+        next_cand = int(data.get("next_cand", 0))
+    else:
+        # No snapshot: start from scratch.
+        codes_block = minimal_strings_for_subgroup(Z_wt, X_wt, block)
+        codes_block = [np.asarray(code, dtype=np.int16) for code in codes_block]
 
-    codes_block = [np.asarray(code, dtype=np.int16) for code in codes_block]
-    block_spos = np.asarray(block_spos, dtype=np.int8)
+        if not codes_block:
+            # Empty block: nothing to do, but write a cache to avoid recomputation.
+            perms = get_perms(Z_wt, X_wt)
+            block_spos = np.zeros((0, len(perms)), dtype=np.int8)
+            data = {
+                "codes_block": codes_block,
+                "block_spos": block_spos,
+            }
+            with open(cache_path, "wb") as f:
+                pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+            # Clean any stale in-progress file.
+            if os.path.exists(inprog_path):
+                os.remove(inprog_path)
+            return codes_block, block_spos
 
+        perms = get_perms(Z_wt, X_wt)
+        num_perms = len(perms)
+        block_spos = np.zeros((len(codes_block), num_perms), dtype=np.int8)
+        next_cand = 0
+
+    # 3) Process remaining candidates one by one, checking the time limit.
+    perms = get_perms(Z_wt, X_wt)
+    num_perms = len(perms)
+    num_cands = len(codes_block)
+
+    while next_cand < num_cands:
+        # Global time check: if we've been running too long, checkpoint and exit.
+        if time.time() - start_time > TIME_LIMIT_SECONDS:
+            snapshot = {
+                "codes_block": codes_block,
+                "block_spos": block_spos,
+                "next_cand": next_cand,
+            }
+            with open(inprog_path, "wb") as f:
+                pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
+            raise SystemExit(
+                "Time limit reached during _subgroup_codes_and_bins; "
+                "partial state saved in in_progress/."
+            )
+
+        # Compute permutation bins for this single candidate.
+        cand_code = [codes_block[next_cand]]
+        cand_spos = permutation_bins(Z_wt, X_wt, block, cand_code)
+        cand_spos = np.asarray(cand_spos, dtype=np.int8)
+        if cand_spos.shape != (1, num_perms):
+            raise RuntimeError(
+                f"permutation_bins returned shape {cand_spos.shape} "
+                f"for a single candidate; expected (1, {num_perms})."
+            )
+
+        block_spos[next_cand: next_cand + 1, :] = cand_spos
+        next_cand += 1
+
+    # 4) All candidates done: save final result and clear in-progress file.
     data = {
         "codes_block": codes_block,
         "block_spos": block_spos,
     }
-    with open(path, "wb") as f:
+    with open(cache_path, "wb") as f:
         pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+    if os.path.exists(inprog_path):
+        os.remove(inprog_path)
 
     return codes_block, block_spos
 
 
 # ============================================================
-# 5) Find all codes in a given abelian group
+# 5) Find all codes in a given abelian group (with checkpointing)
 # ============================================================
 
-def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
+def _group_inprogress_filename(Z_wt: int, X_wt: int, group):
+    """
+    In-progress filename for a single abelian group in find_all_codes_in_group.
+    One file per (Z_wt, X_wt, group) under in_progress/.
+    """
+    group = tuple(int(g) for g in group)
+    group_str = "_".join(str(g) for g in group)
+    os.makedirs("in_progress", exist_ok=True)
+    fname = f"group_Z{Z_wt}_X{X_wt}_g{group_str}.pkl"
+    return os.path.join("in_progress", fname)
+
+
+def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_time: float = None):
     """
     Finds all codes of weights Z_wt and X_wt for a given group.
 
     group: tuple of prime powers.
 
-    Memory-optimised version:
+    Memory-optimised and checkpoint-aware version:
       - Decomposes the group into prime blocks.
       - For each block, loads:
           * codes_block : list of candidate block codes (matrices)
           * block_spos  : (#cands, #perms) signed positions
-      - Runs a DFS over choices of one candidate per block.
-        Each DFS state stores ONLY:
-          * idx_tuple: a tuple of candidate indices (one per processed block)
-          * spos_agg: aggregated signed-position vector across those blocks
-      - Only at DFS leaves (all blocks chosen) do we reconstruct the full
-        code (concatenating columns) and build MirrorCode objects.
+      - Runs an iterative DFS over choices of one candidate per block.
+        Each DFS state stores:
+          * block_index : which block we're at
+          * cand_idx    : next candidate index to try at this block
+          * idx_tuple   : tuple of candidate indices chosen for
+                          blocks [0..block_index-1]
+          * spos_agg    : aggregated signed-position vector
 
-    Extra pruning:
-      - For each block and permutation, precompute the *best possible*
-        positive coordinate (if any). From that we derive, for each DFS
-        depth, the best future positive coordinate available.
-      - If at some DFS state, for a permutation p we have a current
-        negative earliest sign at coordinate k and even in the best case
-        across all remaining blocks we cannot get a positive sign at a
-        coordinate < k, then no completion of this branch can yield a
-        valid code, and we prune that branch immediately.
+      - Only at DFS leaves (all blocks chosen) do we reconstruct the full
+        code (concatenating block columns), build MirrorCode objects, and
+        record final results.
+
+    Checkpointing:
+      - If the time elapsed since `start_time` exceeds 10 hours, we save:
+          * good_raw : list of (z_part, x_part, is_css, k_val) found so far
+          * stack    : current DFS stack
+        in an in_progress/ file for this (Z_wt, X_wt, group) and SystemExit.
+      - On the next run, if that in-progress file exists, we restore good_raw
+        and stack and resume DFS from where we left off.
+      - When DFS finishes, we remove any in-progress file for this group.
+
+    If start_time is None, it defaults to the current time. When called via
+    find_all_codes, a shared start_time is passed down so the 10-hour budget
+    is per overall call to find_all_codes.
     """
+    if start_time is None:
+        start_time = time.time()
+
     group = tuple(group)
     total = Z_wt + X_wt
 
@@ -523,7 +586,6 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
             i += 1
         blocks.append(tuple(block))
 
-    # We still use get_perms to know how many permutations we have
     perms = get_perms(Z_wt, X_wt)
     num_perms = len(perms)
     num_blocks = len(blocks)
@@ -531,68 +593,88 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
     # Preload all blocks' codes and signed positions once
     blocks_data = []
     for block in blocks:
-        codes_block, block_spos = _subgroup_codes_and_bins(Z_wt, X_wt, block)
+        codes_block, block_spos = _subgroup_codes_and_bins(Z_wt, X_wt, block, start_time=start_time)
         if not codes_block:
             return []
         codes_block = [np.asarray(code, dtype=np.int16) for code in codes_block]
         block_spos = np.asarray(block_spos, dtype=np.int8)
         blocks_data.append((codes_block, block_spos))
 
-    # ------------------------------------------------------------
-    # Precompute best possible positive coordinate per block/perm
-    # and the best from any future block.
-    #
-    # best_pos[b, p]  = min k>0 over candidates with +k at perm p
-    #                   or 0 if no positive sign is ever possible.
-    # best_from[b, p] = min_{b' >= b} best_pos[b', p]
-    #               (best possible positive from block b or later).
-    # ------------------------------------------------------------
+    # Precompute best possible positive coordinate per block & perm
+    # best_pos[b, p] = min k>0 over candidates with +k at perm p, or 0 if none
     best_pos = np.zeros((num_blocks, num_perms), dtype=np.uint8)
-
     for b, (_, block_spos) in enumerate(blocks_data):
-        # block_spos shape: (num_cands_b, num_perms), int8
-        # We want the minimum positive k per perm.
-        bs = block_spos
-        # Use 127 as a sentinel (since coords <= total-1 <= 255 but we store in uint8).
-        # First work in int16 to avoid int8 overflow weirdness.
+        bs = block_spos  # (num_cands_b, num_perms), int8
+        # Use 127 as a sentinel; work in int16 to avoid overflow.
         arr = np.where(bs > 0, bs.astype(np.int16), 127)
         min_pos = arr.min(axis=0)  # int16
-        # Convert to uint8, map sentinel back to 0 ("no positive available").
         min_pos_u8 = min_pos.astype(np.uint8)
         min_pos_u8[min_pos_u8 == 127] = 0
         best_pos[b, :] = min_pos_u8
 
     # best_from[b, p] = best positive from blocks b, b+1, ...
     best_from = np.zeros((num_blocks + 1, num_perms), dtype=np.uint8)
-    # Row num_blocks (no future blocks) is all zeros by construction.
-    # Fill backwards.
     for b in range(num_blocks - 1, -1, -1):
         if b == num_blocks - 1:
             best_from[b, :] = best_pos[b, :]
         else:
             best_from[b, :] = np.minimum(best_pos[b, :], best_from[b + 1, :])
 
-    good = []
+    # Group-level in-progress file
+    inprog_path = _group_inprogress_filename(Z_wt, X_wt, group)
 
-    def dfs(block_index, idx_tuple, spos_agg):
-        """
-        DFS over blocks:
+    # good_raw holds final tuples: (z_part, x_part, is_css, k_val)
+    good_raw = []
+    stack = []
 
-        block_index : which block we're choosing a candidate for now
-        idx_tuple   : tuple of candidate indices chosen for blocks [0..block_index-1]
-        spos_agg    : aggregated signed positions across those blocks
-        """
-        # If we've assigned all blocks, evaluate the full code
+    # If there is an in-progress snapshot, restore it.
+    if os.path.exists(inprog_path):
+        with open(inprog_path, "rb") as f:
+            data = pickle.load(f)
+        good_raw = data.get("good_raw", [])
+        raw_stack = data.get("stack", [])
+        stack = []
+        # Rebuild stack with numpy arrays for spos_agg
+        for frame in raw_stack:
+            block_index, cand_idx, idx_tuple, spos_list = frame
+            spos_arr = np.asarray(spos_list, dtype=np.int8)
+            stack.append((int(block_index), int(cand_idx), tuple(idx_tuple), spos_arr))
+    else:
+        # Fresh DFS: start at block 0 with no choices and zero sign vector
+        spos0 = np.zeros(num_perms, dtype=np.int8)
+        stack.append((0, 0, tuple(), spos0))
+
+    # Iterative DFS
+    while stack:
+        # Time check: if we've been running too long, save state and exit.
+        if time.time() - start_time > TIME_LIMIT_SECONDS:
+            raw_stack = []
+            for (b_idx, c_idx, idx_tuple, spos_agg) in stack:
+                raw_stack.append((b_idx, c_idx, tuple(idx_tuple), spos_agg.tolist()))
+            snapshot = {
+                "good_raw": good_raw,
+                "stack": raw_stack,
+            }
+            with open(inprog_path, "wb") as f:
+                pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
+            raise SystemExit(
+                "Time limit reached during find_all_codes_in_group; "
+                "partial state saved in in_progress/."
+            )
+
+        block_index, cand_idx, idx_tuple, spos_agg = stack.pop()
+
+        # Leaf: all blocks chosen
         if block_index == num_blocks:
             # Final sign filter: any negative signed position kills the code
             if (spos_agg < 0).any():
-                return
+                continue
 
             # Reconstruct full vecs by concatenating block codes along columns
             vecs_parts = []
-            for b, cand_idx in enumerate(idx_tuple):
+            for b, block_cand_idx in enumerate(idx_tuple):
                 codes_block_b, _ = blocks_data[b]
-                vecs_parts.append(codes_block_b[cand_idx])
+                vecs_parts.append(codes_block_b[block_cand_idx])
             vecs = np.concatenate(vecs_parts, axis=1)  # shape (total, len(group))
 
             z_part = vecs[:Z_wt]
@@ -600,89 +682,93 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
 
             # Z and X rows must be distinct
             if len(np.unique(z_part, axis=0)) != Z_wt:
-                return
+                continue
             if len(np.unique(x_part, axis=0)) != X_wt:
-                return
+                continue
 
             code = MirrorCode(group, z_part, x_part)
             k_val = code.get_k()
             if k_val < min_k:
-                return
+                continue
 
-            good.append((code, k_val))
-            return
+            is_css = code.is_CSS()
+            # Store raw result (without group) for easier snapshotting
+            good_raw.append((z_part, x_part, bool(is_css), int(k_val)))
+            continue
 
-        # Otherwise, choose a candidate for this block
+        # Internal node: still need to choose a candidate for this block
         codes_block, block_spos = blocks_data[block_index]
         num_block_cands = block_spos.shape[0]
 
-        # Best future positives from *later* blocks
-        future_best = best_from[block_index + 1]  # shape (num_perms,)
+        if cand_idx >= num_block_cands:
+            # No more candidates at this block; nothing to do.
+            continue
 
-        for cand_idx in range(num_block_cands):
-            spos_blk = block_spos[cand_idx]  # shape (num_perms,)
+        # We will revisit this block later with the next candidate.
+        stack.append((block_index, cand_idx + 1, idx_tuple, spos_agg))
 
-            blk_nonzero = (spos_blk != 0)
-            if not blk_nonzero.any():
-                # This block doesn't change any signs at all
-                new_spos = spos_agg
-            else:
-                agg_nonzero = (spos_agg != 0)
-                new_spos = spos_agg.copy()
+        spos_blk = block_spos[cand_idx]  # shape (num_perms,)
+        blk_nonzero = (spos_blk != 0)
 
-                # Case 1: previously zero, block non-zero -> take block
-                idx1 = (~agg_nonzero) & blk_nonzero
-                if idx1.any():
-                    blk1 = spos_blk[idx1]
-                    # A fresh -1 here means earliest negative at coord 1,
-                    # which can never be fixed (no j < 1). Immediate prune.
-                    if (blk1 == -1).any():
-                        continue
-                    new_spos[idx1] = blk1
+        # Combine signed positions:
+        #   - If aggregate is zero and block non-zero: take block.
+        #   - If both non-zero: take earlier position.
+        new_spos = spos_agg
+        if blk_nonzero.any():
+            agg_nonzero = (spos_agg != 0)
+            new_spos = spos_agg.copy()
 
-                # Case 2: both non-zero -> take earlier position
-                idx2 = agg_nonzero & blk_nonzero
-                if idx2.any():
-                    pos_agg = np.abs(spos_agg)
-                    pos_blk = np.abs(spos_blk)
-                    earlier = pos_blk < pos_agg
-                    idx_update = idx2 & earlier
-                    if idx_update.any():
-                        blk2 = spos_blk[idx_update]
-                        # Again, a new -1 at coord 1 is hopeless.
-                        if (blk2 == -1).any():
-                            continue
-                        new_spos[idx_update] = blk2
-
-            # Extra pruning: check if any negative entry can ever be fixed
-            neg_mask = new_spos < 0
-            if neg_mask.any():
-                k = np.abs(new_spos).astype(np.uint8)        # coordinate of earliest sign
-                fb = future_best                             # best future positive
-                # For perms where we already have a negative earliest sign:
-                # if fb == 0 => no future positive possible
-                # or fb >= k => no future positive at a *earlier* coordinate
-                cannot_fix = neg_mask & ((fb == 0) | (fb >= k))
-                if cannot_fix.any():
+            # Case 1: previously zero, block non-zero -> take block
+            idx1 = (~agg_nonzero) & blk_nonzero
+            if idx1.any():
+                blk1 = spos_blk[idx1]
+                # A fresh -1 (earliest negative at coord 1) is hopeless immediately.
+                if (blk1 == -1).any():
                     continue
+                new_spos[idx1] = blk1
 
-            dfs(block_index + 1, idx_tuple + (cand_idx,), new_spos)
+            # Case 2: both non-zero -> take earlier position
+            idx2 = agg_nonzero & blk_nonzero
+            if idx2.any():
+                pos_agg = np.abs(spos_agg)
+                pos_blk = np.abs(spos_blk)
+                earlier = pos_blk < pos_agg
+                idx_update = idx2 & earlier
+                if idx_update.any():
+                    blk2 = spos_blk[idx_update]
+                    if (blk2 == -1).any():
+                        continue
+                    new_spos[idx_update] = blk2
 
-    # Start DFS with no blocks chosen and all-zero sign vector
-    dfs(0, tuple(), np.zeros(num_perms, dtype=np.int8))
+        # Extra pruning: check if any negative entry can ever be fixed by future blocks
+        neg_mask = new_spos < 0
+        if neg_mask.any():
+            k = np.abs(new_spos).astype(np.uint8)   # coordinate of earliest sign
+            fb = best_from[block_index + 1]         # best future positive coord
+            # cannot_fix: negative earliest sign at coord k, but no future positive < k
+            cannot_fix = neg_mask & ((fb == 0) | (fb >= k))
+            if cannot_fix.any():
+                continue
 
-    if not good:
+        # This branch survives: go to next block with this candidate
+        stack.append((block_index + 1, 0, idx_tuple + (cand_idx,), new_spos))
+
+    # DFS finished: clear any stale in-progress file.
+    if os.path.exists(inprog_path):
+        os.remove(inprog_path)
+
+    if not good_raw:
         return []
 
     if return_k:
         return [
-            (group, code.z0, code.x0, code.is_CSS(), k_val)
-            for code, k_val in good
+            (group, z_part, x_part, is_css, k_val)
+            for (z_part, x_part, is_css, k_val) in good_raw
         ]
     else:
         return [
-            (group, code.z0, code.x0, code.is_CSS())
-            for code, _ in good
+            (group, z_part, x_part, is_css)
+            for (z_part, x_part, is_css, k_val) in good_raw
         ]
 
 
@@ -693,10 +779,15 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True):
 def find_all_codes(n, Z_wt, X_wt, min_k=3):
     """
     Finds all codes for a given number of qubits, n, of given weight.
+
+    This is safe to call from external files. Each call to find_all_codes
+    gets its own 10-hour time budget, which is passed down via `start_time`
+    to all subgroup and per-group computations.
     """
     if n < 2:
         return []
 
+    # If n is a power of 2 and a weight is 3, there are no codes.
     if min_k > 0 and (Z_wt == 3 or X_wt == 3):
         p = n
         while True:
@@ -706,10 +797,15 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
                 break
             p //= 2
 
+    # Per-call start time (used for all nested checkpoint checks)
+    start_time = time.time()
+
     result = []
     for group in n_partitions(n):
         result.extend(
-            find_all_codes_in_group(Z_wt, X_wt, group, min_k, return_k=(min_k > 0))
+            find_all_codes_in_group(
+                Z_wt, X_wt, group, min_k, return_k=(min_k > 0), start_time=start_time
+            )
         )
     return result
 
