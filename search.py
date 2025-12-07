@@ -26,7 +26,7 @@ from util import find_strides, index_to_array, partitions
 # Global time limit (per run) for checkpointing
 # ============================================================
 
-TIME_LIMIT_SECONDS = 10 * 3600  # 10 hours
+TIME_LIMIT_SECONDS = 36000  # 10 hours
 
 
 # ============================================================
@@ -78,22 +78,48 @@ def n_partitions(n):
 
 
 # ============================================================
-# 2) Minimal strings for a subgroup
+# 2) Minimal strings for a subgroup (with checkpointing)
 # ============================================================
 
-def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
+def _minstrings_inprogress_filename(Z_wt: int, X_wt: int, block):
+    """
+    In-progress filename for minimal_strings_for_subgroup on a given block.
+    Uses the same (p, lambdas) encoding as the subgroup cache.
+    """
+    block = tuple(block)
+    first = block[0]
+    p = list(primefac(first))[0]
+
+    lambdas = []
+    for n in block:
+        m = n
+        e = 0
+        while m % p == 0:
+            m //= p
+            e += 1
+        lambdas.append(e)
+    exps_str = "_".join(str(e) for e in lambdas)
+
+    os.makedirs("in_progress", exist_ok=True)
+    fname = f"mstr_Z{Z_wt}_X{X_wt}_p{p}_l{exps_str}.pkl"
+    return os.path.join("in_progress", fname)
+
+
+def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float = None):
     """
     Compute lex-minimal strings for a given prime-power subgroup.
 
     subgroup: iterable of p-powers, all with the same prime p.
 
     Optimised memory use:
-      * We no longer build a huge intermediate `result` and then filter.
-      * Instead, we test each finished candidate immediately with
+      * We test each finished candidate immediately with
         `is_single_equivalence_class_under_shifts` and only keep the
         ones that pass.
-      * We also avoid an unnecessary `.copy()` on the stacked code.
+      * We add checkpointing so that long runs can save DFS state and resume.
     """
+    if start_time is None:
+        start_time = time.time()
+
     subgroup = tuple(subgroup)
     factors = [list(primefac(s)) for s in subgroup]
     p = factors[0][0]
@@ -111,13 +137,37 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
     lex_min_raw = lex_minimal_vectors(p, lambdas)
     lex_min = [np.array(v, dtype=np.int16) for v in lex_min_raw]
 
-    good = []  # only store codes that pass the equivalence-class test
-    candidates = [[np.zeros(r, dtype=np.int16)]]
-    vec_indices = [0]
+    inprog_path = _minstrings_inprogress_filename(Z_wt, X_wt, subgroup)
+
+    # Either resume from snapshot or start from scratch
+    if os.path.exists(inprog_path):
+        with open(inprog_path, "rb") as f:
+            data = pickle.load(f)
+        good = data["good"]
+        candidates = data["candidates"]
+        vec_indices = data["vec_indices"]
+    else:
+        good = []  # only store codes that pass the equivalence-class test
+        candidates = [[np.zeros(r, dtype=np.int16)]]
+        vec_indices = [0]
 
     total = Z_wt + X_wt
 
     while True:
+        # Global time limit check
+        if time.time() - start_time > TIME_LIMIT_SECONDS:
+            snapshot = {
+                "good": good,
+                "candidates": candidates,
+                "vec_indices": vec_indices,
+            }
+            with open(inprog_path, "wb") as f:
+                pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
+            raise SystemExit(
+                "Time limit reached during minimal_strings_for_subgroup; "
+                "partial state saved in in_progress/."
+            )
+
         last_idx = vec_indices[-1]
         current_layer = candidates[-1]
 
@@ -205,6 +255,10 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
 
             vec_indices[-1] += 1
 
+    # Finished successfully: remove any stale in-progress file
+    if os.path.exists(inprog_path):
+        os.remove(inprog_path)
+
     return good
 
 
@@ -212,7 +266,7 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup):
 # 3) Permutation bins (signed position, permutations inside)
 # ============================================================
 
-def permutation_bins(Z_wt, X_wt, subgroup, candidates):
+def permutation_bins(Z_wt, X_wt, subgroup, candidates, precomputed=None):
     """
     For each candidate code on a prime-power subgroup and each permutation,
     compute the *earliest* non-zero sign and encode it as a single signed
@@ -225,25 +279,30 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates):
     where 1 <= k <= total-1 and total = Z_wt + X_wt.
 
     Optimisation:
-      * Permutations are generated internally via `get_perms(Z_wt, X_wt)`,
-        so we don't recompute or pass them around at every call site.
+      * If `precomputed` is provided (a tuple
+          (p, lambdas, strides, subgroup_np, perms_np, total)),
+        we reuse it instead of recomputing subgroup data and permutations.
+      * Otherwise, we compute everything internally (backwards compatible).
     """
-    subgroup = tuple(subgroup)
-    factors = [list(primefac(s)) for s in subgroup]
-    p = factors[0][0]
-    lambdas = tuple(len(f) for f in factors)
-    strides = np.array(find_strides(subgroup), dtype=int)
-    subgroup_np = np.array(subgroup, dtype=int)
+    if precomputed is None:
+        subgroup = tuple(subgroup)
+        factors = [list(primefac(s)) for s in subgroup]
+        p = factors[0][0]
+        lambdas = tuple(len(f) for f in factors)
+        strides = np.array(find_strides(subgroup), dtype=int)
+        subgroup_np = np.array(subgroup, dtype=int)
+        total = Z_wt + X_wt
+        perms = get_perms(Z_wt, X_wt)
+        perms_np = np.array(perms, dtype=np.int32)
+    else:
+        p, lambdas, strides, subgroup_np, perms_np, total = precomputed
 
-    total = Z_wt + X_wt
-    perms = get_perms(Z_wt, X_wt)
-    num_perms = len(perms)
-
+    num_perms = perms_np.shape[0]
     num_cands = len(candidates)
+
     if num_cands == 0 or num_perms == 0:
         return np.zeros((num_cands, num_perms), dtype=np.int8)
 
-    perms_np = np.array(perms, dtype=int)
     block_spos = np.zeros((num_cands, num_perms), dtype=np.int8)
 
     for cand_ind, cand in enumerate(candidates):
@@ -366,7 +425,7 @@ def _subgroup_cache_filename(Z_wt: int, X_wt: int, block):
 def _subgroup_inprogress_filename(Z_wt: int, X_wt: int, block):
     """
     Same naming convention as _subgroup_cache_filename, but under in_progress/.
-    Used to store partial results for (Z_wt, X_wt, block).
+    Used to store partial results for (Z_wt, X_wt, block) across permutation_bins.
     """
     block = tuple(block)
     first = block[0]
@@ -396,25 +455,14 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
         codes_block : list of np.ndarray, each shape (Z_wt+X_wt, len(block))
         block_spos  : np.ndarray, shape (num_cands, num_perms), int8
 
-    Disk format (in subgroups/…pkl) is a dict with keys:
-        "codes_block", "block_spos"
-
     Checkpointing:
       - If a full result exists in subgroups/, load and return it.
       - Else, if an in-progress file exists in in_progress/, resume the
         per-candidate permutation-bin computation from where it left off.
-      - Otherwise, compute minimal_strings_for_subgroup from scratch and then
-        compute permutation bins, one candidate at a time, checking a 10-hour
-        time limit measured from `start_time`.
-      - If the time limit is exceeded during this computation, save the
-        current partial block_spos and the next candidate index to in_progress/,
-        then SystemExit so the batch system can restart us.
-      - Once the computation finishes, save the full result to subgroups/ and
-        remove any in-progress file for this block.
-
-    If start_time is None, it defaults to the current time. When called via
-    find_all_codes / find_all_codes_in_group, a shared start_time is passed
-    down so the 10-hour budget is per overall run.
+      - Otherwise, compute minimal_strings_for_subgroup (itself checkpointed)
+        and then compute permutation bins, one candidate at a time, checking
+        a 10-hour time limit measured from `start_time`.
+      - On timeout, save a snapshot and raise SystemExit.
     """
     if start_time is None:
         start_time = time.time()
@@ -422,6 +470,18 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
     block = tuple(block)
     cache_path = _subgroup_cache_filename(Z_wt, X_wt, block)
     inprog_path = _subgroup_inprogress_filename(Z_wt, X_wt, block)
+
+    # Precompute subgroup + permutation context once per block
+    factors = [list(primefac(s)) for s in block]
+    p = factors[0][0]
+    lambdas = tuple(len(f) for f in factors)
+    strides = np.array(find_strides(block), dtype=int)
+    subgroup_np = np.array(block, dtype=int)
+    total = Z_wt + X_wt
+    perms = get_perms(Z_wt, X_wt)
+    perms_np = np.array(perms, dtype=np.int32)
+    num_perms = perms_np.shape[0]
+    perm_ctx = (p, lambdas, strides, subgroup_np, perms_np, total)
 
     # 1) If we already have the final result, just load and return.
     if os.path.exists(cache_path):
@@ -431,7 +491,7 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
         block_spos = np.asarray(data["block_spos"], dtype=np.int8)
         return codes_block, block_spos
 
-    # 2) Check for an in-progress snapshot.
+    # 2) Check for an in-progress snapshot of this subgroup's permutation_bins.
     if os.path.exists(inprog_path):
         with open(inprog_path, "rb") as f:
             data = pickle.load(f)
@@ -439,37 +499,29 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
         block_spos = np.asarray(data["block_spos"], dtype=np.int8)
         next_cand = int(data.get("next_cand", 0))
     else:
-        # No snapshot: start from scratch.
-        codes_block = minimal_strings_for_subgroup(Z_wt, X_wt, block)
+        # No snapshot: start from scratch by computing minimal strings.
+        codes_block = minimal_strings_for_subgroup(Z_wt, X_wt, block, start_time=start_time)
         codes_block = [np.asarray(code, dtype=np.int16) for code in codes_block]
 
         if not codes_block:
-            # Empty block: nothing to do, but write a cache to avoid recomputation.
-            perms = get_perms(Z_wt, X_wt)
-            block_spos = np.zeros((0, len(perms)), dtype=np.int8)
+            block_spos = np.zeros((0, num_perms), dtype=np.int8)
             data = {
                 "codes_block": codes_block,
                 "block_spos": block_spos,
             }
             with open(cache_path, "wb") as f:
                 pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
-            # Clean any stale in-progress file.
             if os.path.exists(inprog_path):
                 os.remove(inprog_path)
             return codes_block, block_spos
 
-        perms = get_perms(Z_wt, X_wt)
-        num_perms = len(perms)
         block_spos = np.zeros((len(codes_block), num_perms), dtype=np.int8)
         next_cand = 0
 
     # 3) Process remaining candidates one by one, checking the time limit.
-    perms = get_perms(Z_wt, X_wt)
-    num_perms = len(perms)
     num_cands = len(codes_block)
 
     while next_cand < num_cands:
-        # Global time check: if we've been running too long, checkpoint and exit.
         if time.time() - start_time > TIME_LIMIT_SECONDS:
             snapshot = {
                 "codes_block": codes_block,
@@ -483,9 +535,8 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
                 "partial state saved in in_progress/."
             )
 
-        # Compute permutation bins for this single candidate.
         cand_code = [codes_block[next_cand]]
-        cand_spos = permutation_bins(Z_wt, X_wt, block, cand_code)
+        cand_spos = permutation_bins(Z_wt, X_wt, block, cand_code, precomputed=perm_ctx)
         cand_spos = np.asarray(cand_spos, dtype=np.int8)
         if cand_spos.shape != (1, num_perms):
             raise RuntimeError(
@@ -496,7 +547,6 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
         block_spos[next_cand: next_cand + 1, :] = cand_spos
         next_cand += 1
 
-    # 4) All candidates done: save final result and clear in-progress file.
     data = {
         "codes_block": codes_block,
         "block_spos": block_spos,
@@ -533,34 +583,8 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
     group: tuple of prime powers.
 
     Memory-optimised and checkpoint-aware version:
-      - Decomposes the group into prime blocks.
-      - For each block, loads:
-          * codes_block : list of candidate block codes (matrices)
-          * block_spos  : (#cands, #perms) signed positions
-      - Runs an iterative DFS over choices of one candidate per block.
-        Each DFS state stores:
-          * block_index : which block we're at
-          * cand_idx    : next candidate index to try at this block
-          * idx_tuple   : tuple of candidate indices chosen for
-                          blocks [0..block_index-1]
-          * spos_agg    : aggregated signed-position vector
-
-      - Only at DFS leaves (all blocks chosen) do we reconstruct the full
-        code (concatenating block columns), build MirrorCode objects, and
-        record final results.
-
-    Checkpointing:
-      - If the time elapsed since `start_time` exceeds 10 hours, we save:
-          * good_raw : list of (z_part, x_part, is_css, k_val) found so far
-          * stack    : current DFS stack
-        in an in_progress/ file for this (Z_wt, X_wt, group) and SystemExit.
-      - On the next run, if that in-progress file exists, we restore good_raw
-        and stack and resume DFS from where we left off.
-      - When DFS finishes, we remove any in-progress file for this group.
-
-    If start_time is None, it defaults to the current time. When called via
-    find_all_codes, a shared start_time is passed down so the 10-hour budget
-    is per overall call to find_all_codes.
+      - Uses iterative DFS with a stack.
+      - Checkpoints DFS state + results to in_progress/ if time limit exceeded.
     """
     if start_time is None:
         start_time = time.time()
@@ -601,18 +625,15 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
         blocks_data.append((codes_block, block_spos))
 
     # Precompute best possible positive coordinate per block & perm
-    # best_pos[b, p] = min k>0 over candidates with +k at perm p, or 0 if none
     best_pos = np.zeros((num_blocks, num_perms), dtype=np.uint8)
     for b, (_, block_spos) in enumerate(blocks_data):
         bs = block_spos  # (num_cands_b, num_perms), int8
-        # Use 127 as a sentinel; work in int16 to avoid overflow.
         arr = np.where(bs > 0, bs.astype(np.int16), 127)
         min_pos = arr.min(axis=0)  # int16
         min_pos_u8 = min_pos.astype(np.uint8)
         min_pos_u8[min_pos_u8 == 127] = 0
         best_pos[b, :] = min_pos_u8
 
-    # best_from[b, p] = best positive from blocks b, b+1, ...
     best_from = np.zeros((num_blocks + 1, num_perms), dtype=np.uint8)
     for b in range(num_blocks - 1, -1, -1):
         if b == num_blocks - 1:
@@ -620,33 +641,26 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
         else:
             best_from[b, :] = np.minimum(best_pos[b, :], best_from[b + 1, :])
 
-    # Group-level in-progress file
     inprog_path = _group_inprogress_filename(Z_wt, X_wt, group)
 
-    # good_raw holds final tuples: (z_part, x_part, is_css, k_val)
     good_raw = []
     stack = []
 
-    # If there is an in-progress snapshot, restore it.
     if os.path.exists(inprog_path):
         with open(inprog_path, "rb") as f:
             data = pickle.load(f)
         good_raw = data.get("good_raw", [])
         raw_stack = data.get("stack", [])
         stack = []
-        # Rebuild stack with numpy arrays for spos_agg
         for frame in raw_stack:
             block_index, cand_idx, idx_tuple, spos_list = frame
             spos_arr = np.asarray(spos_list, dtype=np.int8)
             stack.append((int(block_index), int(cand_idx), tuple(idx_tuple), spos_arr))
     else:
-        # Fresh DFS: start at block 0 with no choices and zero sign vector
         spos0 = np.zeros(num_perms, dtype=np.int8)
         stack.append((0, 0, tuple(), spos0))
 
-    # Iterative DFS
     while stack:
-        # Time check: if we've been running too long, save state and exit.
         if time.time() - start_time > TIME_LIMIT_SECONDS:
             raw_stack = []
             for (b_idx, c_idx, idx_tuple, spos_agg) in stack:
@@ -664,23 +678,19 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
 
         block_index, cand_idx, idx_tuple, spos_agg = stack.pop()
 
-        # Leaf: all blocks chosen
         if block_index == num_blocks:
-            # Final sign filter: any negative signed position kills the code
             if (spos_agg < 0).any():
                 continue
 
-            # Reconstruct full vecs by concatenating block codes along columns
             vecs_parts = []
             for b, block_cand_idx in enumerate(idx_tuple):
                 codes_block_b, _ = blocks_data[b]
                 vecs_parts.append(codes_block_b[block_cand_idx])
-            vecs = np.concatenate(vecs_parts, axis=1)  # shape (total, len(group))
+            vecs = np.concatenate(vecs_parts, axis=1)
 
             z_part = vecs[:Z_wt]
             x_part = vecs[Z_wt:]
 
-            # Z and X rows must be distinct
             if len(np.unique(z_part, axis=0)) != Z_wt:
                 continue
             if len(np.unique(x_part, axis=0)) != X_wt:
@@ -692,27 +702,22 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
                 continue
 
             is_css = code.is_CSS()
-            # Store raw result (without group) for easier snapshotting
             good_raw.append((z_part, x_part, bool(is_css), int(k_val)))
             continue
 
-        # Internal node: still need to choose a candidate for this block
         codes_block, block_spos = blocks_data[block_index]
         num_block_cands = block_spos.shape[0]
 
         if cand_idx >= num_block_cands:
-            # No more candidates at this block; nothing to do.
             continue
 
-        # We will revisit this block later with the next candidate.
+        # Schedule the next candidate at this block on the stack
         stack.append((block_index, cand_idx + 1, idx_tuple, spos_agg))
 
-        spos_blk = block_spos[cand_idx]  # shape (num_perms,)
+        # Combine signs with this candidate
+        spos_blk = block_spos[cand_idx]
         blk_nonzero = (spos_blk != 0)
 
-        # Combine signed positions:
-        #   - If aggregate is zero and block non-zero: take block.
-        #   - If both non-zero: take earlier position.
         new_spos = spos_agg
         if blk_nonzero.any():
             agg_nonzero = (spos_agg != 0)
@@ -722,7 +727,6 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
             idx1 = (~agg_nonzero) & blk_nonzero
             if idx1.any():
                 blk1 = spos_blk[idx1]
-                # A fresh -1 (earliest negative at coord 1) is hopeless immediately.
                 if (blk1 == -1).any():
                     continue
                 new_spos[idx1] = blk1
@@ -740,20 +744,17 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
                         continue
                     new_spos[idx_update] = blk2
 
-        # Extra pruning: check if any negative entry can ever be fixed by future blocks
+        # Prune branches where a negative earliest sign cannot be fixed
         neg_mask = new_spos < 0
         if neg_mask.any():
-            k = np.abs(new_spos).astype(np.uint8)   # coordinate of earliest sign
-            fb = best_from[block_index + 1]         # best future positive coord
-            # cannot_fix: negative earliest sign at coord k, but no future positive < k
+            k = np.abs(new_spos).astype(np.uint8)
+            fb = best_from[block_index + 1]
             cannot_fix = neg_mask & ((fb == 0) | (fb >= k))
             if cannot_fix.any():
                 continue
 
-        # This branch survives: go to next block with this candidate
         stack.append((block_index + 1, 0, idx_tuple + (cand_idx,), new_spos))
 
-    # DFS finished: clear any stale in-progress file.
     if os.path.exists(inprog_path):
         os.remove(inprog_path)
 
@@ -773,16 +774,17 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
 
 
 # ============================================================
-# 6) Top-level search over all groups of size n
+# 6) Top-level search over all groups of size n (single-threaded)
 # ============================================================
 
 def find_all_codes(n, Z_wt, X_wt, min_k=3):
     """
     Finds all codes for a given number of qubits, n, of given weight.
 
-    This is safe to call from external files. Each call to find_all_codes
-    gets its own 10-hour time budget, which is passed down via `start_time`
-    to all subgroup and per-group computations.
+    Single-threaded, but with checkpointing via in_progress/ for:
+      - minimal_strings_for_subgroup
+      - _subgroup_codes_and_bins
+      - find_all_codes_in_group
     """
     if n < 2:
         return []
@@ -797,17 +799,21 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
                 break
             p //= 2
 
-    # Per-call start time (used for all nested checkpoint checks)
-    start_time = time.time()
+    groups = n_partitions(n)
+    if not groups:
+        return []
 
-    result = []
-    for group in n_partitions(n):
-        result.extend(
+    start_time = time.time()
+    results = []
+
+    for group in groups:
+        results.extend(
             find_all_codes_in_group(
-                Z_wt, X_wt, group, min_k, return_k=(min_k > 0), start_time=start_time
+                Z_wt, X_wt, group, min_k=min_k, return_k=(min_k > 0), start_time=start_time
             )
         )
-    return result
+
+    return results
 
 
 # ============================================================
