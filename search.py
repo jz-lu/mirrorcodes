@@ -26,7 +26,16 @@ from util import find_strides, index_to_array, partitions
 # Global time limit (per run) for checkpointing
 # ============================================================
 
-TIME_LIMIT_SECONDS = 36000  # 10 hours
+TIME_LIMIT_SECONDS = 100  # 10 hours
+
+
+class TimeLimitExceeded(Exception):
+    """
+    Internal exception used to signal that a time limit has been exceeded
+    inside a helper like permutation_bins. The caller is responsible for
+    writing an in_progress/ snapshot before propagating or exiting.
+    """
+    pass
 
 
 # ============================================================
@@ -264,9 +273,17 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float = None)
 
 # ============================================================
 # 3) Permutation bins (signed position, permutations inside)
+#    + internal timeout checks
 # ============================================================
 
-def permutation_bins(Z_wt, X_wt, subgroup, candidates, precomputed=None):
+def permutation_bins(
+    Z_wt,
+    X_wt,
+    subgroup,
+    candidates,
+    precomputed=None,
+    start_time: float = None,
+):
     """
     For each candidate code on a prime-power subgroup and each permutation,
     compute the *earliest* non-zero sign and encode it as a single signed
@@ -282,8 +299,15 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates, precomputed=None):
       * If `precomputed` is provided (a tuple
           (p, lambdas, strides, subgroup_np, perms_np, total)),
         we reuse it instead of recomputing subgroup data and permutations.
-      * Otherwise, we compute everything internally (backwards compatible).
+      * Otherwise, we compute everything internally.
+      * We also check the global TIME_LIMIT_SECONDS against `start_time`
+        and raise TimeLimitExceeded if we are over budget. The caller
+        (_subgroup_codes_and_bins) is responsible for writing an in_progress
+        snapshot before exiting.
     """
+    if start_time is None:
+        start_time = time.time()
+
     if precomputed is None:
         subgroup = tuple(subgroup)
         factors = [list(primefac(s)) for s in subgroup]
@@ -306,6 +330,12 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates, precomputed=None):
     block_spos = np.zeros((num_cands, num_perms), dtype=np.int8)
 
     for cand_ind, cand in enumerate(candidates):
+        # Time check per candidate
+        if time.time() - start_time > TIME_LIMIT_SECONDS:
+            raise TimeLimitExceeded(
+                "Time limit reached during permutation_bins (per candidate)."
+            )
+
         cand = np.asarray(cand, dtype=np.int64)
         # Precompute base lex values for cand rows
         base_lex = (cand @ strides).astype(int)
@@ -325,6 +355,12 @@ def permutation_bins(Z_wt, X_wt, subgroup, candidates, precomputed=None):
                 prefix_auts[i] = (isos_i, shifts_i)
 
         for perm_ind in range(num_perms):
+            # Time check per permutation
+            if time.time() - start_time > TIME_LIMIT_SECONDS:
+                raise TimeLimitExceeded(
+                    "Time limit reached during permutation_bins (per permutation)."
+                )
+
             perm = perms_np[perm_ind]
 
             # Reorder and normalise by translation so that first row is zero
@@ -462,7 +498,7 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
       - Otherwise, compute minimal_strings_for_subgroup (itself checkpointed)
         and then compute permutation bins, one candidate at a time, checking
         a 10-hour time limit measured from `start_time`.
-      - On timeout, save a snapshot and raise SystemExit.
+      - On timeout, save a snapshot in in_progress/ and raise SystemExit.
     """
     if start_time is None:
         start_time = time.time()
@@ -536,7 +572,30 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
             )
 
         cand_code = [codes_block[next_cand]]
-        cand_spos = permutation_bins(Z_wt, X_wt, block, cand_code, precomputed=perm_ctx)
+
+        try:
+            cand_spos = permutation_bins(
+                Z_wt,
+                X_wt,
+                block,
+                cand_code,
+                precomputed=perm_ctx,
+                start_time=start_time,
+            )
+        except TimeLimitExceeded:
+            # Save the candidates processed so far (0..next_cand-1) and exit.
+            snapshot = {
+                "codes_block": codes_block,
+                "block_spos": block_spos,
+                "next_cand": next_cand,
+            }
+            with open(inprog_path, "wb") as f:
+                pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
+            raise SystemExit(
+                "Time limit reached inside permutation_bins; "
+                "partial subgroup state saved in in_progress/."
+            )
+
         cand_spos = np.asarray(cand_spos, dtype=np.int8)
         if cand_spos.shape != (1, num_perms):
             raise RuntimeError(
@@ -646,6 +705,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
     good_raw = []
     stack = []
 
+    # Resume DFS if we have a saved group-level snapshot
     if os.path.exists(inprog_path):
         with open(inprog_path, "rb") as f:
             data = pickle.load(f)
@@ -661,6 +721,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
         stack.append((0, 0, tuple(), spos0))
 
     while stack:
+        # Group-level time check and snapshot
         if time.time() - start_time > TIME_LIMIT_SECONDS:
             raw_stack = []
             for (b_idx, c_idx, idx_tuple, spos_agg) in stack:
@@ -755,6 +816,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
 
         stack.append((block_index + 1, 0, idx_tuple + (cand_idx,), new_spos))
 
+    # Finished successfully for this group: remove any group-level in_progress file
     if os.path.exists(inprog_path):
         os.remove(inprog_path)
 
