@@ -6,7 +6,7 @@ import os
 results = [[]]
 for s in range(1, 4):
     missing = []
-    for i in range(201):
+    for i in range(301):
         if Path(f"data/STAGE{s}_n{i}_part0.pkl").is_file():
             result = []
             cur = 0
