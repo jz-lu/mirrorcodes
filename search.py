@@ -26,7 +26,7 @@ from util import find_strides, index_to_array, partitions
 # Global time limit (per run) for checkpointing
 # ============================================================
 
-TIME_LIMIT_SECONDS = 100  # 10 hours
+TIME_LIMIT_SECONDS = 36000  # 10 hours
 
 
 class TimeLimitExceeded(Exception):
