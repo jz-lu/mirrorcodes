@@ -7,6 +7,7 @@ import itertools as it
 import os
 import pickle
 import time
+import sys
 from functools import lru_cache
 
 import numpy as np
@@ -26,14 +27,13 @@ from util import find_strides, index_to_array, partitions
 # Global time limit (per run) for checkpointing
 # ============================================================
 
-TIME_LIMIT_SECONDS = 36000  # 10 hours
+TIME_LIMIT_SECONDS = 39600
 
 
 class TimeLimitExceeded(Exception):
     """
     Internal exception used to signal that a time limit has been exceeded
-    inside a helper like permutation_bins. The caller is responsible for
-    writing an in_progress/ snapshot before propagating or exiting.
+    somewhere in the search. Top-level find_all_codes catches this.
     """
     pass
 
@@ -87,32 +87,8 @@ def n_partitions(n):
 
 
 # ============================================================
-# 2) Minimal strings for a subgroup (with checkpointing)
+# 2) Minimal strings for a subgroup (iterative DFS, no snapshots)
 # ============================================================
-
-def _minstrings_inprogress_filename(Z_wt: int, X_wt: int, block):
-    """
-    In-progress filename for minimal_strings_for_subgroup on a given block.
-    Uses the same (p, lambdas) encoding as the subgroup cache.
-    """
-    block = tuple(block)
-    first = block[0]
-    p = list(primefac(first))[0]
-
-    lambdas = []
-    for n in block:
-        m = n
-        e = 0
-        while m % p == 0:
-            m //= p
-            e += 1
-        lambdas.append(e)
-    exps_str = "_".join(str(e) for e in lambdas)
-
-    os.makedirs("in_progress", exist_ok=True)
-    fname = f"mstr_Z{Z_wt}_X{X_wt}_p{p}_l{exps_str}.pkl"
-    return os.path.join("in_progress", fname)
-
 
 def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float = None):
     """
@@ -124,10 +100,12 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float = None)
       * We test each finished candidate immediately with
         `is_single_equivalence_class_under_shifts` and only keep the
         ones that pass.
-      * We add checkpointing so that long runs can save DFS state and resume.
+      * No internal disk snapshotting here; if time limit is exceeded,
+        we raise TimeLimitExceeded and let higher levels handle
+        checkpointing.
     """
     if start_time is None:
-        start_time = time.time()
+        start_time = time.monotonic()
 
     subgroup = tuple(subgroup)
     factors = [list(primefac(s)) for s in subgroup]
@@ -146,64 +124,52 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float = None)
     lex_min_raw = lex_minimal_vectors(p, lambdas)
     lex_min = [np.array(v, dtype=np.int16) for v in lex_min_raw]
 
-    inprog_path = _minstrings_inprogress_filename(Z_wt, X_wt, subgroup)
+    good = []
 
-    # Either resume from snapshot or start from scratch
-    if os.path.exists(inprog_path):
-        with open(inprog_path, "rb") as f:
-            data = pickle.load(f)
-        good = data["good"]
-        candidates = data["candidates"]
-        vec_indices = data["vec_indices"]
-    else:
-        good = []  # only store codes that pass the equivalence-class test
-        candidates = [[np.zeros(r, dtype=np.int16)]]
-        vec_indices = [0]
-
+    # DFS state: candidates[level] is list of possible vectors at that level;
+    # vec_indices[level] is the index into candidates[level] for the current path.
+    candidates = [[np.zeros(r, dtype=np.int16)]]  # level 0
+    vec_indices = [0]                             # select the zero vector at level 0
     total = Z_wt + X_wt
 
     while True:
         # Global time limit check
-        if time.time() - start_time > TIME_LIMIT_SECONDS:
-            snapshot = {
-                "good": good,
-                "candidates": candidates,
-                "vec_indices": vec_indices,
-            }
-            with open(inprog_path, "wb") as f:
-                pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
-            raise SystemExit(
-                "Time limit reached during minimal_strings_for_subgroup; "
-                "partial state saved in in_progress/."
+        if time.monotonic() - start_time > TIME_LIMIT_SECONDS:
+            raise TimeLimitExceeded(
+                "Time limit reached during minimal_strings_for_subgroup."
             )
 
+        depth = len(vec_indices)
         last_idx = vec_indices[-1]
         current_layer = candidates[-1]
 
+        # Backtrack if we've exhausted the current layer
         if last_idx >= len(current_layer):
-            if len(vec_indices) == 1:
+            if depth == 1:
+                # Fully done
                 break
-            vec_indices = vec_indices[:-2] + [vec_indices[-2] + 1]
+            # Pop this level and advance the index at the previous level
             candidates.pop()
+            vec_indices.pop()
+            vec_indices[-1] += 1
             continue
 
-        depth = len(vec_indices)
-
+        # If we are not yet at full length, expand one more level
         if depth < total:
-            candidates.append([])
+            # Fixed prefix determined by vec_indices
             fixed = tuple(
                 tuple(int(x) for x in candidates[level][vec_indices[level]])
                 for level in range(depth)
             )
+            all_fixed_zero = all(all(x == 0 for x in f) for f in fixed)
 
-            all_fixed_zero = all(
-                all(x == 0 for x in f) for f in fixed
-            )
+            new_layer = []
 
             if all_fixed_zero:
+                # All-zero prefix.
                 if depth != Z_wt:
-                    # Just all lex-minimal representatives
-                    candidates[-1] = lex_min
+                    # Before the Z_wt-th vector: any lex-minimal representative
+                    new_layer = lex_min
                 else:
                     # At depth == Z_wt, enforce the small-weight rule
                     for v_vec in lex_min:
@@ -211,62 +177,65 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float = None)
                             if p > 2:
                                 break
                         else:
-                            candidates[-1].append(v_vec)
+                            new_layer.append(v_vec)
             else:
                 # Nontrivial constraints: use automorphisms_fixing_vectors with Z_wt
                 isos, shifts = automorphisms_fixing_vectors(p, lambdas, Z_wt, fixed)
-                if isos.size == 0:
-                    vec_indices[-1] += 1
-                    candidates.pop()
-                    continue
+                if isos.size != 0:
+                    num_isos = isos.shape[0]
+                    for v_vec in elems:
+                        if time.monotonic() - start_time > TIME_LIMIT_SECONDS:
+                            raise TimeLimitExceeded(
+                                "Time limit reached during minimal_strings_for_subgroup "
+                                "(element loop)."
+                            )
 
-                num_isos = isos.shape[0]
+                        if depth == Z_wt and v_vec.max() > (1 if p == 2 else 0):
+                            if p > 2:
+                                break
 
-                for v_vec in elems:
-                    if depth == Z_wt and v_vec.max() > (1 if p == 2 else 0):
-                        if p > 2:
-                            break
+                        base_index = int(v_vec @ strides)
+                        min_index = base_index
 
-                    base_index = int(v_vec @ strides)
-                    min_index = base_index
+                        if depth < Z_wt:
+                            # Z-region: no shift in the comparison
+                            for idx in range(num_isos):
+                                img = (isos[idx] @ v_vec) % subgroup_np
+                                idx_val = int(img @ strides)
+                                if idx_val < min_index:
+                                    min_index = idx_val
+                        else:
+                            # X-region: apply automorphism then subtract shift
+                            for idx in range(num_isos):
+                                img = (isos[idx] @ v_vec) % subgroup_np
+                                img_shifted = (img - shifts[idx]) % subgroup_np
+                                idx_val = int(img_shifted @ strides)
+                                if idx_val < min_index:
+                                    min_index = idx_val
 
-                    if depth < Z_wt:
-                        # Z-region: no shift in the comparison
-                        for idx in range(num_isos):
-                            img = (isos[idx] @ v_vec) % subgroup_np
-                            idx_val = int(img @ strides)
-                            if idx_val < min_index:
-                                min_index = idx_val
-                    else:
-                        # X-region: apply automorphism then subtract shift
-                        for idx in range(num_isos):
-                            img = (isos[idx] @ v_vec) % subgroup_np
-                            img_shifted = (img - shifts[idx]) % subgroup_np
-                            idx_val = int(img_shifted @ strides)
-                            if idx_val < min_index:
-                                min_index = idx_val
+                        if base_index <= min_index:
+                            new_layer.append(v_vec)
 
-                    if base_index <= min_index:
-                        candidates[-1].append(v_vec)
+            if not new_layer:
+                # No possible extension for this prefix: move on at this depth
+                vec_indices[-1] += 1
+                continue
 
+            candidates.append(new_layer)
             vec_indices.append(0)
-        else:
-            # Build a full code for this candidate
-            code = np.stack(
-                [candidates[level][vec_indices[level]] for level in range(depth)],
-                axis=0,
-            )
+            continue
 
-            # Filter immediately: only keep codes that form a single
-            # equivalence class under shifts
-            if is_single_equivalence_class_under_shifts(Z_wt, X_wt, subgroup, code):
-                good.append(code)
+        # depth == total: we have a full candidate code
+        code = np.stack(
+            [candidates[level][vec_indices[level]] for level in range(total)],
+            axis=0,
+        )
 
-            vec_indices[-1] += 1
+        if is_single_equivalence_class_under_shifts(Z_wt, X_wt, subgroup, code):
+            good.append(code)
 
-    # Finished successfully: remove any stale in-progress file
-    if os.path.exists(inprog_path):
-        os.remove(inprog_path)
+        # Advance last coordinate at this depth
+        vec_indices[-1] += 1
 
     return good
 
@@ -299,14 +268,11 @@ def permutation_bins(
       * If `precomputed` is provided (a tuple
           (p, lambdas, strides, subgroup_np, perms_np, total)),
         we reuse it instead of recomputing subgroup data and permutations.
-      * Otherwise, we compute everything internally.
-      * We also check the global TIME_LIMIT_SECONDS against `start_time`
-        and raise TimeLimitExceeded if we are over budget. The caller
-        (_subgroup_codes_and_bins) is responsible for writing an in_progress
-        snapshot before exiting.
+      * We also check TIME_LIMIT_SECONDS against `start_time` and raise
+        TimeLimitExceeded if over budget.
     """
     if start_time is None:
-        start_time = time.time()
+        start_time = time.monotonic()
 
     if precomputed is None:
         subgroup = tuple(subgroup)
@@ -331,7 +297,7 @@ def permutation_bins(
 
     for cand_ind, cand in enumerate(candidates):
         # Time check per candidate
-        if time.time() - start_time > TIME_LIMIT_SECONDS:
+        if time.monotonic() - start_time > TIME_LIMIT_SECONDS:
             raise TimeLimitExceeded(
                 "Time limit reached during permutation_bins (per candidate)."
             )
@@ -356,7 +322,7 @@ def permutation_bins(
 
         for perm_ind in range(num_perms):
             # Time check per permutation
-            if time.time() - start_time > TIME_LIMIT_SECONDS:
+            if time.monotonic() - start_time > TIME_LIMIT_SECONDS:
                 raise TimeLimitExceeded(
                     "Time limit reached during permutation_bins (per permutation)."
                 )
@@ -491,17 +457,14 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
         codes_block : list of np.ndarray, each shape (Z_wt+X_wt, len(block))
         block_spos  : np.ndarray, shape (num_cands, num_perms), int8
 
-    Checkpointing:
-      - If a full result exists in subgroups/, load and return it.
-      - Else, if an in-progress file exists in in_progress/, resume the
-        per-candidate permutation-bin computation from where it left off.
-      - Otherwise, compute minimal_strings_for_subgroup (itself checkpointed)
-        and then compute permutation bins, one candidate at a time, checking
-        a 10-hour time limit measured from `start_time`.
-      - On timeout, save a snapshot in in_progress/ and raise SystemExit.
+    Checkpointing + time limit:
+      - Uses minimal_strings_for_subgroup (no internal snapshot, but may raise
+        TimeLimitExceeded) and permutation_bins (checkpointed per candidate).
+      - If TIME_LIMIT_SECONDS exceeded, saves snapshot for permutation_bins
+        and raises TimeLimitExceeded up the call stack.
     """
     if start_time is None:
-        start_time = time.time()
+        start_time = time.monotonic()
 
     block = tuple(block)
     cache_path = _subgroup_cache_filename(Z_wt, X_wt, block)
@@ -558,7 +521,7 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
     num_cands = len(codes_block)
 
     while next_cand < num_cands:
-        if time.time() - start_time > TIME_LIMIT_SECONDS:
+        if time.monotonic() - start_time > TIME_LIMIT_SECONDS:
             snapshot = {
                 "codes_block": codes_block,
                 "block_spos": block_spos,
@@ -566,7 +529,7 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
             }
             with open(inprog_path, "wb") as f:
                 pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
-            raise SystemExit(
+            raise TimeLimitExceeded(
                 "Time limit reached during _subgroup_codes_and_bins; "
                 "partial state saved in in_progress/."
             )
@@ -583,7 +546,7 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
                 start_time=start_time,
             )
         except TimeLimitExceeded:
-            # Save the candidates processed so far (0..next_cand-1) and exit.
+            # Save the candidates processed so far (0..next_cand-1) and propagate.
             snapshot = {
                 "codes_block": codes_block,
                 "block_spos": block_spos,
@@ -591,10 +554,7 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float = No
             }
             with open(inprog_path, "wb") as f:
                 pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
-            raise SystemExit(
-                "Time limit reached inside permutation_bins; "
-                "partial subgroup state saved in in_progress/."
-            )
+            raise
 
         cand_spos = np.asarray(cand_spos, dtype=np.int8)
         if cand_spos.shape != (1, num_perms):
@@ -644,9 +604,10 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
     Memory-optimised and checkpoint-aware version:
       - Uses iterative DFS with a stack.
       - Checkpoints DFS state + results to in_progress/ if time limit exceeded.
+      - On time limit, raises TimeLimitExceeded.
     """
     if start_time is None:
-        start_time = time.time()
+        start_time = time.monotonic()
 
     group = tuple(group)
     total = Z_wt + X_wt
@@ -676,6 +637,10 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
     # Preload all blocks' codes and signed positions once
     blocks_data = []
     for block in blocks:
+        if time.monotonic() - start_time > TIME_LIMIT_SECONDS:
+            raise TimeLimitExceeded(
+                "Time limit reached during find_all_codes_in_group (preload blocks)."
+            )
         codes_block, block_spos = _subgroup_codes_and_bins(Z_wt, X_wt, block, start_time=start_time)
         if not codes_block:
             return []
@@ -722,7 +687,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
 
     while stack:
         # Group-level time check and snapshot
-        if time.time() - start_time > TIME_LIMIT_SECONDS:
+        if time.monotonic() - start_time > TIME_LIMIT_SECONDS:
             raw_stack = []
             for (b_idx, c_idx, idx_tuple, spos_agg) in stack:
                 raw_stack.append((b_idx, c_idx, tuple(idx_tuple), spos_agg.tolist()))
@@ -732,7 +697,7 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
             }
             with open(inprog_path, "wb") as f:
                 pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
-            raise SystemExit(
+            raise TimeLimitExceeded(
                 "Time limit reached during find_all_codes_in_group; "
                 "partial state saved in in_progress/."
             )
@@ -839,14 +804,34 @@ def find_all_codes_in_group(Z_wt, X_wt, group, min_k=3, return_k=True, start_tim
 # 6) Top-level search over all groups of size n (single-threaded)
 # ============================================================
 
+def _codes_partial_filename(n: int, Z_wt: int, X_wt: int, min_k: int):
+    """
+    Filename for saving partial results (codes found so far) for a given
+    (n, Z_wt, X_wt, min_k). Lives under in_progress/.
+    """
+    os.makedirs("in_progress", exist_ok=True)
+    return os.path.join(
+        "in_progress",
+        f"codes_n{n}_Z{Z_wt}_X{X_wt}_k{min_k}.pkl",
+    )
+
+
 def find_all_codes(n, Z_wt, X_wt, min_k=3):
     """
     Finds all codes for a given number of qubits, n, of given weight.
 
     Single-threaded, but with checkpointing via in_progress/ for:
-      - minimal_strings_for_subgroup
       - _subgroup_codes_and_bins
       - find_all_codes_in_group
+
+    Time limit:
+      - A single call to find_all_codes(n, Z_wt, X_wt) gets a 10-hour
+        wallclock budget (TIME_LIMIT_SECONDS). If exceeded, we:
+          * save the codes found so far to a file under in_progress/,
+          * call sys.exit(msg) with a short message (printed to stderr),
+            so the caller cannot proceed.
+      - On success (no timeout), we return the full list of codes and
+        print nothing, and clean up any stale partial "codes_*" file.
     """
     if n < 2:
         return []
@@ -865,15 +850,41 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
     if not groups:
         return []
 
-    start_time = time.time()
+    start_time = time.monotonic()
     results = []
+    partial_path = _codes_partial_filename(n, Z_wt, X_wt, min_k)
 
-    for group in groups:
-        results.extend(
-            find_all_codes_in_group(
+    try:
+        for group in groups:
+            # Quick coarse check before going into group-level work
+            if time.monotonic() - start_time > TIME_LIMIT_SECONDS:
+                raise TimeLimitExceeded(
+                    "Time limit reached before processing next group."
+                )
+
+            more = find_all_codes_in_group(
                 Z_wt, X_wt, group, min_k=min_k, return_k=(min_k > 0), start_time=start_time
             )
+            results.extend(more)
+
+    except TimeLimitExceeded:
+        # We hit the time limit somewhere. Subgroup and group states have
+        # already been written to in_progress/.
+        # Save the codes found so far and terminate the process with a
+        # short message to stderr, so the caller cannot continue.
+        with open(partial_path, "wb") as f:
+            pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+        msg = (
+            f"Time limit reached in find_all_codes(n={n}, Z_wt={Z_wt}, "
+            f"X_wt={X_wt}, min_k={min_k}); partial results saved to '{partial_path}'."
         )
+        # sys.exit(msg) prints msg to stderr and exits with status 1.
+        sys.exit(msg)
+
+    # Completed within time: clean up any stale partial file, then return
+    if os.path.exists(partial_path):
+        os.remove(partial_path)
 
     return results
 
@@ -883,7 +894,7 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
 # ============================================================
 
 def main():
-    print(len(find_all_codes(48, 3, 3)))
+    print(len(find_all_codes(72, 3, 3)))
 
 
 if __name__ == "__main__":
