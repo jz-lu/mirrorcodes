@@ -14,6 +14,8 @@ import numpy as np
 from primefac import primefac
 
 from isomorphism import (
+    TimeLimitExceeded,
+    set_timeout_checker,
     automorphisms_fixing_vectors,
     is_single_equivalence_class_under_shifts,
     lex_minimal_vectors,
@@ -30,20 +32,28 @@ from util import find_strides, index_to_array, partitions
 TIME_LIMIT_SECONDS = 36000
 
 
-class TimeLimitExceeded(Exception):
-    """
-    Internal exception used to signal that a time limit has been exceeded
-    somewhere in the search. Top-level find_all_codes catches this.
-    """
-    pass
-
-
 def _elapsed(start_time: float) -> float:
     """
     Helper: elapsed time in seconds from a given start_time.
     Uses time.monotonic() to avoid issues with wallclock adjustments.
     """
     return time.monotonic() - start_time
+
+
+def _install_timeout_checker(start_time: float):
+    """
+    Install a timeout checker in the isomorphism module so that
+    deep routines there can participate in the same global time
+    limit as find_all_codes.
+    """
+
+    def _checker():
+        if _elapsed(start_time) > TIME_LIMIT_SECONDS:
+            raise TimeLimitExceeded(
+                "Global time limit exceeded in isomorphism routines."
+            )
+
+    set_timeout_checker(_checker)
 
 
 # ============================================================
@@ -122,6 +132,30 @@ def _minstrings_inprogress_filename(Z_wt: int, X_wt: int, subgroup):
     return os.path.join("in_progress", fname)
 
 
+def _minstrings_cache_filename(Z_wt: int, X_wt: int, subgroup):
+    """
+    Final cache filename for minimal_strings_for_subgroup on a given block.
+    Lives under subgroups/ and shares the same naming convention.
+    """
+    block = tuple(subgroup)
+    first = block[0]
+    p = list(primefac(first))[0]
+
+    lambdas = []
+    for n in block:
+        m = n
+        e = 0
+        while m % p == 0:
+            m //= p
+            e += 1
+        lambdas.append(e)
+    exps_str = "_".join(str(e) for e in lambdas)
+
+    os.makedirs("subgroups", exist_ok=True)
+    fname = f"mstr_Z{Z_wt}_X{X_wt}_p{p}_l{exps_str}.pkl"
+    return os.path.join("subgroups", fname)
+
+
 def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float):
     """
     Compute lex-minimal strings for a given prime-power subgroup.
@@ -137,13 +171,24 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float):
         {good, candidates, vec_indices} into in_progress/mstr_*.pkl
         and raises TimeLimitExceeded so the caller can checkpoint
         higher-level state.
-      * On success, removes the mstr_*.pkl file.
+      * On success, saves `good` to subgroups/mstr_*.pkl for reuse,
+        and removes any in-progress snapshot.
     """
     subgroup = tuple(subgroup)
     factors = [list(primefac(s)) for s in subgroup]
     p = factors[0][0]
     lambdas = tuple(len(f) for f in factors)
     r = len(subgroup)
+
+    cache_path = _minstrings_cache_filename(Z_wt, X_wt, subgroup)
+    inprog_path = _minstrings_inprogress_filename(Z_wt, X_wt, subgroup)
+
+    # If we already have the final result on disk, load and return.
+    if os.path.exists(cache_path):
+        with open(cache_path, "rb") as f:
+            data = pickle.load(f)
+        good = [np.asarray(code, dtype=np.int16) for code in data.get("good", [])]
+        return good
 
     strides = np.array(find_strides(subgroup), dtype=int)
     subgroup_np = np.array(subgroup, dtype=int)
@@ -156,12 +201,9 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float):
     lex_min_raw = lex_minimal_vectors(p, lambdas)
     lex_min = [np.array(v, dtype=np.int16) for v in lex_min_raw]
 
-    inprog_path = _minstrings_inprogress_filename(Z_wt, X_wt, subgroup)
-
     # Resume from snapshot if present
     if os.path.exists(inprog_path):
         with open(inprog_path, "rb") as f:
-            print(inprog_path)
             data = pickle.load(f)
         good = data.get("good", [])
         candidates = data.get("candidates", [[np.zeros(r, dtype=np.int16)]])
@@ -180,125 +222,127 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float):
 
     total = Z_wt + X_wt
 
-    while True:
-        # Global time limit check
-        if _elapsed(start_time) > TIME_LIMIT_SECONDS:
-            snapshot = {
-                "good": good,
-                "candidates": candidates,
-                "vec_indices": vec_indices,
-            }
-            with open(inprog_path, "wb") as f:
-                pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
-            raise TimeLimitExceeded(
-                "Time limit reached during minimal_strings_for_subgroup."
-            )
+    try:
+        while True:
+            # Global time limit check
+            if _elapsed(start_time) > TIME_LIMIT_SECONDS:
+                raise TimeLimitExceeded(
+                    "Time limit reached during minimal_strings_for_subgroup."
+                )
 
-        depth = len(vec_indices)
-        last_idx = vec_indices[-1]
-        current_layer = candidates[-1]
+            depth = len(vec_indices)
+            last_idx = vec_indices[-1]
+            current_layer = candidates[-1]
 
-        # Backtrack if we've exhausted the current layer
-        if last_idx >= len(current_layer):
-            if depth == 1:
-                # Fully done
-                break
-            # Pop this level and advance the index at the previous level
-            candidates.pop()
-            vec_indices.pop()
-            vec_indices[-1] += 1
-            continue
-
-        # If we are not yet at full length, expand one more level
-        if depth < total:
-            fixed = tuple(
-                tuple(int(x) for x in candidates[level][vec_indices[level]])
-                for level in range(depth)
-            )
-            all_fixed_zero = all(all(x == 0 for x in f) for f in fixed)
-
-            new_layer = []
-
-            if all_fixed_zero:
-                # All-zero prefix.
-                if depth != Z_wt:
-                    # Before the Z_wt-th vector: any lex-minimal representative
-                    new_layer = lex_min
-                else:
-                    # At depth == Z_wt, enforce the small-weight rule
-                    for v_vec in lex_min:
-                        if v_vec.max() > (1 if p == 2 else 0):
-                            if p > 2:
-                                break
-                        else:
-                            new_layer.append(v_vec)
-            else:
-                # Nontrivial constraints: use automorphisms_fixing_vectors with Z_wt
-                isos, shifts = automorphisms_fixing_vectors(p, lambdas, Z_wt, fixed)
-                if isos.size != 0:
-                    num_isos = isos.shape[0]
-                    for v_vec in elems:
-                        if _elapsed(start_time) > TIME_LIMIT_SECONDS:
-                            snapshot = {
-                                "good": good,
-                                "candidates": candidates,
-                                "vec_indices": vec_indices,
-                            }
-                            with open(inprog_path, "wb") as f:
-                                pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
-                            raise TimeLimitExceeded(
-                                "Time limit reached during minimal_strings_for_subgroup "
-                                "(element loop)."
-                            )
-
-                        if depth == Z_wt and v_vec.max() > (1 if p == 2 else 0):
-                            if p > 2:
-                                break
-
-                        base_index = int(v_vec @ strides)
-                        min_index = base_index
-
-                        if depth < Z_wt:
-                            # Z-region: no shift in the comparison
-                            for idx in range(num_isos):
-                                img = (isos[idx] @ v_vec) % subgroup_np
-                                idx_val = int(img @ strides)
-                                if idx_val < min_index:
-                                    min_index = idx_val
-                        else:
-                            # X-region: apply automorphism then subtract shift
-                            for idx in range(num_isos):
-                                img = (isos[idx] @ v_vec) % subgroup_np
-                                img_shifted = (img - shifts[idx]) % subgroup_np
-                                idx_val = int(img_shifted @ strides)
-                                if idx_val < min_index:
-                                    min_index = idx_val
-
-                        if base_index <= min_index:
-                            new_layer.append(v_vec)
-
-            if not new_layer:
-                # No possible extension for this prefix: move on at this depth
+            # Backtrack if we've exhausted the current layer
+            if last_idx >= len(current_layer):
+                if depth == 1:
+                    # Fully done
+                    break
+                # Pop this level and advance the index at the previous level
+                candidates.pop()
+                vec_indices.pop()
                 vec_indices[-1] += 1
                 continue
 
-            candidates.append(new_layer)
-            vec_indices.append(0)
-            continue
+            # If we are not yet at full length, expand one more level
+            if depth < total:
+                fixed = tuple(
+                    tuple(int(x) for x in candidates[level][vec_indices[level]])
+                    for level in range(depth)
+                )
+                all_fixed_zero = all(all(x == 0 for x in f) for f in fixed)
 
-        # depth == total: we have a full candidate code
-        code = np.stack(
-            [candidates[level][vec_indices[level]] for level in range(total)],
-            axis=0,
-        )
+                new_layer = []
 
-        if is_single_equivalence_class_under_shifts(Z_wt, X_wt, subgroup, code):
-            good.append(code)
+                if all_fixed_zero:
+                    # All-zero prefix.
+                    if depth != Z_wt:
+                        # Before the Z_wt-th vector: any lex-minimal representative
+                        new_layer = lex_min
+                    else:
+                        # At depth == Z_wt, enforce the small-weight rule
+                        for v_vec in lex_min:
+                            if v_vec.max() > (1 if p == 2 else 0):
+                                if p > 2:
+                                    break
+                            else:
+                                new_layer.append(v_vec)
+                else:
+                    # Nontrivial constraints: use automorphisms_fixing_vectors with Z_wt
+                    isos, shifts = automorphisms_fixing_vectors(p, lambdas, Z_wt, fixed)
+                    if isos.size != 0:
+                        num_isos = isos.shape[0]
+                        for v_vec in elems:
+                            if _elapsed(start_time) > TIME_LIMIT_SECONDS:
+                                raise TimeLimitExceeded(
+                                    "Time limit reached during minimal_strings_for_subgroup "
+                                    "(element loop)."
+                                )
 
-        # Advance last coordinate at this depth
-        vec_indices[-1] += 1
+                            if depth == Z_wt and v_vec.max() > (1 if p == 2 else 0):
+                                if p > 2:
+                                    break
 
-    # Finished successfully: remove any stale in-progress file
+                            base_index = int(v_vec @ strides)
+                            min_index = base_index
+
+                            if depth < Z_wt:
+                                # Z-region: no shift in the comparison
+                                for idx in range(num_isos):
+                                    img = (isos[idx] @ v_vec) % subgroup_np
+                                    idx_val = int(img @ strides)
+                                    if idx_val < min_index:
+                                        min_index = idx_val
+                            else:
+                                # X-region: apply automorphism then subtract shift
+                                for idx in range(num_isos):
+                                    img = (isos[idx] @ v_vec) % subgroup_np
+                                    img_shifted = (img - shifts[idx]) % subgroup_np
+                                    idx_val = int(img_shifted @ strides)
+                                    if idx_val < min_index:
+                                        min_index = idx_val
+
+                            if base_index <= min_index:
+                                new_layer.append(v_vec)
+
+                if not new_layer:
+                    # No possible extension for this prefix: move on at this depth
+                    vec_indices[-1] += 1
+                    continue
+
+                candidates.append(new_layer)
+                vec_indices.append(0)
+                continue
+
+            # depth == total: we have a full candidate code
+            code = np.stack(
+                [candidates[level][vec_indices[level]] for level in range(total)],
+                axis=0,
+            )
+
+            if is_single_equivalence_class_under_shifts(Z_wt, X_wt, subgroup, code):
+                good.append(code)
+
+            # Advance last coordinate at this depth
+            vec_indices[-1] += 1
+
+    except TimeLimitExceeded:
+        # Save snapshot on any timeout (including those raised in isomorphism.py)
+        snapshot = {
+            "good": good,
+            "candidates": candidates,
+            "vec_indices": vec_indices,
+        }
+        with open(inprog_path, "wb") as f:
+            pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
+        raise
+
+    # Finished successfully: persist final result and clean up snapshots
+    data = {"good": [np.asarray(code, dtype=np.int16) for code in good]}
+    with open(cache_path, "wb") as f:
+        pickle.dump(data, f, protocol=pickle.HIGHEST_PROTOCOL)
+
     if os.path.exists(inprog_path):
         os.remove(inprog_path)
 
@@ -556,7 +600,6 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float):
     # 2) Check for an in-progress snapshot of this subgroup's permutation_bins.
     if os.path.exists(inprog_path):
         with open(inprog_path, "rb") as f:
-            print(inprog_path)
             data = pickle.load(f)
         codes_block = [np.asarray(code, dtype=np.int16) for code in data["codes_block"]]
         block_spos = np.asarray(data["block_spos"], dtype=np.int8)
@@ -756,101 +799,107 @@ def find_all_codes_in_group(
         spos0 = np.zeros(num_perms, dtype=np.int8)
         stack.append((0, 0, tuple(), spos0))
 
-    while stack:
-        # Group-level time check and snapshot
-        if _elapsed(start_time) > TIME_LIMIT_SECONDS:
-            raw_stack = []
-            for (b_idx, c_idx, idx_tuple, spos_agg) in stack:
-                raw_stack.append((b_idx, c_idx, tuple(idx_tuple), spos_agg.tolist()))
-            snapshot = {
-                "good_raw": good_raw,
-                "stack": raw_stack,
-            }
-            with open(inprog_path, "wb") as f:
-                pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
-            raise TimeLimitExceeded(
-                "Time limit reached during find_all_codes_in_group; "
-                "partial state saved in in_progress/."
-            )
+    try:
+        while stack:
+            # Group-level time check; any timeout here is handled
+            # by the outer except block which snapshots the DFS state.
+            if _elapsed(start_time) > TIME_LIMIT_SECONDS:
+                raise TimeLimitExceeded(
+                    "Time limit reached during find_all_codes_in_group; "
+                    "partial state will be saved in in_progress/."
+                )
 
-        block_index, cand_idx, idx_tuple, spos_agg = stack.pop()
+            block_index, cand_idx, idx_tuple, spos_agg = stack.pop()
 
-        if block_index == num_blocks:
-            if (spos_agg < 0).any():
-                continue
-
-            vecs_parts = []
-            for b, block_cand_idx in enumerate(idx_tuple):
-                codes_block_b, _ = blocks_data[b]
-                vecs_parts.append(codes_block_b[block_cand_idx])
-            vecs = np.concatenate(vecs_parts, axis=1)
-
-            z_part = vecs[:Z_wt]
-            x_part = vecs[Z_wt:]
-
-            if len(np.unique(z_part, axis=0)) != Z_wt:
-                continue
-            if len(np.unique(x_part, axis=0)) != X_wt:
-                continue
-
-            code = MirrorCode(group, z_part, x_part)
-            k_val = code.get_k()
-            if k_val < min_k:
-                continue
-
-            is_css = code.is_CSS()
-            good_raw.append((z_part, x_part, bool(is_css), int(k_val)))
-            continue
-
-        codes_block, block_spos = blocks_data[block_index]
-        num_block_cands = block_spos.shape[0]
-
-        if cand_idx >= num_block_cands:
-            continue
-
-        # Schedule the next candidate at this block on the stack
-        stack.append((block_index, cand_idx + 1, idx_tuple, spos_agg))
-
-        # Combine signs with this candidate
-        spos_blk = block_spos[cand_idx]
-        blk_nonzero = (spos_blk != 0)
-
-        new_spos = spos_agg
-        if blk_nonzero.any():
-            agg_nonzero = (spos_agg != 0)
-            new_spos = spos_agg.copy()
-
-            # Case 1: previously zero, block non-zero -> take block
-            idx1 = (~agg_nonzero) & blk_nonzero
-            if idx1.any():
-                blk1 = spos_blk[idx1]
-                if (blk1 == -1).any():
+            if block_index == num_blocks:
+                if (spos_agg < 0).any():
                     continue
-                new_spos[idx1] = blk1
 
-            # Case 2: both non-zero -> take earlier position
-            idx2 = agg_nonzero & blk_nonzero
-            if idx2.any():
-                pos_agg = np.abs(spos_agg)
-                pos_blk = np.abs(spos_blk)
-                earlier = pos_blk < pos_agg
-                idx_update = idx2 & earlier
-                if idx_update.any():
-                    blk2 = spos_blk[idx_update]
-                    if (blk2 == -1).any():
-                        continue
-                    new_spos[idx_update] = blk2
+                vecs_parts = []
+                for b, block_cand_idx in enumerate(idx_tuple):
+                    codes_block_b, _ = blocks_data[b]
+                    vecs_parts.append(codes_block_b[block_cand_idx])
+                vecs = np.concatenate(vecs_parts, axis=1)
 
-        # Prune branches where a negative earliest sign cannot be fixed
-        neg_mask = new_spos < 0
-        if neg_mask.any():
-            k = np.abs(new_spos).astype(np.uint8)
-            fb = best_from[block_index + 1]
-            cannot_fix = neg_mask & ((fb == 0) | (fb >= k))
-            if cannot_fix.any():
+                z_part = vecs[:Z_wt]
+                x_part = vecs[Z_wt:]
+
+                if len(np.unique(z_part, axis=0)) != Z_wt:
+                    continue
+                if len(np.unique(x_part, axis=0)) != X_wt:
+                    continue
+
+                code = MirrorCode(group, z_part, x_part)
+                k_val = code.get_k()
+                if k_val < min_k:
+                    continue
+
+                is_css = code.is_CSS()
+                good_raw.append((z_part, x_part, bool(is_css), int(k_val)))
                 continue
 
-        stack.append((block_index + 1, 0, idx_tuple + (cand_idx,), new_spos))
+            codes_block, block_spos = blocks_data[block_index]
+            num_block_cands = block_spos.shape[0]
+
+            if cand_idx >= num_block_cands:
+                continue
+
+            # Schedule the next candidate at this block on the stack
+            stack.append((block_index, cand_idx + 1, idx_tuple, spos_agg))
+
+            # Combine signs with this candidate
+            spos_blk = block_spos[cand_idx]
+            blk_nonzero = (spos_blk != 0)
+
+            new_spos = spos_agg
+            if blk_nonzero.any():
+                agg_nonzero = (spos_agg != 0)
+                new_spos = spos_agg.copy()
+
+                # Case 1: previously zero, block non-zero -> take block
+                idx1 = (~agg_nonzero) & blk_nonzero
+                if idx1.any():
+                    blk1 = spos_blk[idx1]
+                    if (blk1 == -1).any():
+                        continue
+                    new_spos[idx1] = blk1
+
+                # Case 2: both non-zero -> take earlier position
+                idx2 = agg_nonzero & blk_nonzero
+                if idx2.any():
+                    pos_agg = np.abs(spos_agg)
+                    pos_blk = np.abs(spos_blk)
+                    earlier = pos_blk < pos_agg
+                    idx_update = idx2 & earlier
+                    if idx_update.any():
+                        blk2 = spos_blk[idx_update]
+                        if (blk2 == -1).any():
+                            continue
+                        new_spos[idx_update] = blk2
+
+            # Prune branches where a negative earliest sign cannot be fixed
+            neg_mask = new_spos < 0
+            if neg_mask.any():
+                k = np.abs(new_spos).astype(np.uint8)
+                fb = best_from[block_index + 1]
+                cannot_fix = neg_mask & ((fb == 0) | (fb >= k))
+                if cannot_fix.any():
+                    continue
+
+            stack.append((block_index + 1, 0, idx_tuple + (cand_idx,), new_spos))
+
+    except TimeLimitExceeded:
+        # Snapshot the current DFS state so we can resume this group later.
+        raw_stack = []
+        for (b_idx, c_idx, idx_tuple, spos_agg) in stack:
+            raw_stack.append((b_idx, c_idx, tuple(idx_tuple), spos_agg.tolist()))
+        snapshot = {
+            "good_raw": good_raw,
+            "stack": raw_stack,
+        }
+        with open(inprog_path, "wb") as f:
+            pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
+        raise
 
     # Finished successfully for this group: remove any group-level in_progress file
     if os.path.exists(inprog_path):
@@ -900,7 +949,8 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
       - Each call to find_all_codes(n, Z_wt, X_wt) has a 10-hour budget
         (TIME_LIMIT_SECONDS) measured from the beginning of this call.
       - If exceeded during this call, we:
-          * save the codes found so far to a file under in_progress/,
+          * save the codes found so far (plus index of next group) to a file
+            under in_progress/,
           * call sys.exit(msg) with a short message (printed to stderr),
             so the caller cannot proceed.
       - On success (no timeout), we return the full list of codes and
@@ -924,11 +974,24 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
         return []
 
     start_time = time.monotonic()
-    results = []
+    _install_timeout_checker(start_time)
+
     partial_path = _codes_partial_filename(n, Z_wt, X_wt, min_k)
 
+    # Resume from a previous top-level snapshot if present
+    if os.path.exists(partial_path):
+        with open(partial_path, "rb") as f:
+            data = pickle.load(f)
+        results = data.get("results", [])
+        next_group_index = int(data.get("next_group_index", 0))
+    else:
+        results = []
+        next_group_index = 0
+
     try:
-        for group in groups:
+        for idx in range(next_group_index, len(groups)):
+            group = groups[idx]
+
             # Quick coarse check before going into group-level work
             if _elapsed(start_time) > TIME_LIMIT_SECONDS:
                 raise TimeLimitExceeded(
@@ -945,16 +1008,24 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
             )
             results.extend(more)
 
+            # We have successfully finished group idx
+            next_group_index = idx + 1
+
     except TimeLimitExceeded:
         # We hit the time limit somewhere. All lower-level state has
         # already been snapshot to in_progress/; we now save the codes
-        # found so far and terminate the process with a short message.
+        # found so far and the index of the next group, then terminate.
+        snapshot = {
+            "results": results,
+            "next_group_index": next_group_index,
+        }
         with open(partial_path, "wb") as f:
-            pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
+            pickle.dump(snapshot, f, protocol=pickle.HIGHEST_PROTOCOL)
 
         msg = (
             f"Time limit reached in find_all_codes(n={n}, Z_wt={Z_wt}, "
-            f"X_wt={X_wt}, min_k={min_k}); partial results saved to '{partial_path}'."
+            f"X_wt={X_wt}, min_k={min_k}); partial results and progress "
+            f"saved to '{partial_path}'."
         )
         sys.exit(msg)
 

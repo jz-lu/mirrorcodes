@@ -4,6 +4,39 @@ from itertools import product, combinations
 from util import find_strides  # if not already imported
 
 
+# ---------- Time-limit support (shared with search.py) ----------
+
+class TimeLimitExceeded(Exception):
+    """Raised when a global search time limit has been exceeded."""
+    pass
+
+
+_TIMEOUT_CHECKER = None
+
+
+def set_timeout_checker(checker):
+    """
+    Register a global timeout checker callback.
+
+    The callback must be a callable taking no arguments. It should either:
+      - do nothing if within the allowed time budget, or
+      - raise TimeLimitExceeded (or a subclass) if the time budget is exceeded.
+
+    search.py installs such a checker so deep isomorphism routines can
+    participate in the same global time limit.
+    """
+    global _TIMEOUT_CHECKER
+    _TIMEOUT_CHECKER = checker
+
+
+def _maybe_check_timeout():
+    """
+    Call the registered timeout checker if any.
+    """
+    if _TIMEOUT_CHECKER is not None:
+        _TIMEOUT_CHECKER()
+
+
 # ---------- Basic helpers ----------
 
 @lru_cache(maxsize=None)
@@ -80,10 +113,10 @@ def _group_elements_and_orders(p, lambdas):
     moduli = [p ** lam for lam in lambdas]
     ranges = [range(m) for m in moduli]
     elems = [tuple(v) for v in product(*ranges)]
-    orders = {
-        v: _element_order_p_group_cached(p, lambdas, v)
-        for v in elems
-    }
+    orders = {}
+    for v in elems:
+        _maybe_check_timeout()
+        orders[v] = _element_order_p_group_cached(p, lambdas, v)
     return tuple(elems), orders
 
 
@@ -114,6 +147,7 @@ def _canonical_rep_and_auto(p, lambdas, v):
     elems, orders = _group_elements_and_orders(p, lambdas)
 
     for w in elems:
+        _maybe_check_timeout()
         # Order is an Aut(G)-invariant, skip incorrect orders
         if orders[w] != ord_v:
             continue
@@ -136,6 +170,7 @@ def _lex_minimal_vectors_cached(p, lambdas):
     elems, _ = _group_elements_and_orders(p, lambdas)
     reps = set()
     for v in elems:
+        _maybe_check_timeout()
         w, _ = _canonical_rep_and_auto(p, lambdas, v)
         reps.add(w)
     return tuple(sorted(reps))
@@ -245,6 +280,7 @@ def _automorphisms_fixing_vectors_cached(p, lambdas, Z_wt, fixed):
     indices_Z = range(min(t, Z_wt))
 
     for i in range(r):
+        _maybe_check_timeout()
         n_i = int(moduli[i])
         opts_per_j = [
             endo_entry_options(p, lambdas[i], lambdas[j]) for j in range(r)
@@ -252,6 +288,7 @@ def _automorphisms_fixing_vectors_cached(p, lambdas, Z_wt, fixed):
         candidates_i = []
 
         for entries in product(*opts_per_j):
+            _maybe_check_timeout()
             row = list(entries)
             ok = True
 
@@ -282,6 +319,7 @@ def _automorphisms_fixing_vectors_cached(p, lambdas, Z_wt, fixed):
     automorphisms = []
 
     def backtrack(i, current_rows, current_rows_mod_p):
+        _maybe_check_timeout()
         if i == r:
             automorphisms.append([list(row) for row in current_rows])
             return
@@ -289,6 +327,7 @@ def _automorphisms_fixing_vectors_cached(p, lambdas, Z_wt, fixed):
         prev_rank = rank_mod_p(current_rows_mod_p, p)
 
         for row in row_candidates[i]:
+            _maybe_check_timeout()
             row_mod_p = tuple(c % p for c in row)
             if all(c == 0 for c in row_mod_p):
                 continue
@@ -400,10 +439,12 @@ def _automorphism_sending_vector(p, lambdas, source, target):
 
     row_candidates = []
     for i in range(r):
+        _maybe_check_timeout()
         n_i = moduli[i]
         opts_per_j = [endo_entry_options(p, lambdas[i], lambdas[j]) for j in range(r)]
         candidates_i = []
         for entries in product(*opts_per_j):
+            _maybe_check_timeout()
             row = list(entries)
             dot = sum(row[j] * src[j] for j in range(r)) % n_i
             if dot == tgt[i]:
@@ -411,12 +452,14 @@ def _automorphism_sending_vector(p, lambdas, source, target):
         row_candidates.append(candidates_i)
 
     def backtrack(i, current_rows, current_rows_mod_p):
+        _maybe_check_timeout()
         if i == r:
             return [list(row) for row in current_rows]
 
         prev_rank = rank_mod_p(current_rows_mod_p, p)
 
         for row in row_candidates[i]:
+            _maybe_check_timeout()
             row_mod_p = tuple(c % p for c in row)
             if all(c == 0 for c in row_mod_p):
                 continue
@@ -521,6 +564,7 @@ def is_single_equivalence_class_under_shifts(Z_wt, X_wt, prime_powers, vectors):
 
     # For each group element v (by index)
     for v_idx in range(N):
+        _maybe_check_timeout()
         v = coords[v_idx]  # shape (r,)
 
         base_idx = None
