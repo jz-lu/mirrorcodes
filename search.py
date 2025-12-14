@@ -951,8 +951,7 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
       - If exceeded during this call, we:
           * save the codes found so far (plus index of next group) to a file
             under in_progress/,
-          * call sys.exit(msg) with a short message (printed to stderr),
-            so the caller cannot proceed.
+          * print a short message to stderr and exit.
       - On success (no timeout), we return the full list of codes and
         clean up any stale partial "codes_*" file.
     """
@@ -978,12 +977,20 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
 
     partial_path = _codes_partial_filename(n, Z_wt, X_wt, min_k)
 
-    # Resume from a previous top-level snapshot if present
+    # Resume from a previous top-level snapshot if present.
+    # Handle both new-format dict snapshots and legacy list-only snapshots.
     if os.path.exists(partial_path):
         with open(partial_path, "rb") as f:
             data = pickle.load(f)
-        results = data.get("results", [])
-        next_group_index = int(data.get("next_group_index", 0))
+
+        if isinstance(data, dict):
+            # New format
+            results = data.get("results", [])
+            next_group_index = int(data.get("next_group_index", 0))
+        else:
+            # Legacy format: file directly stored 'results' as a list
+            results = list(data)
+            next_group_index = 0
     else:
         results = []
         next_group_index = 0
@@ -1027,7 +1034,8 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
             f"X_wt={X_wt}, min_k={min_k}); partial results and progress "
             f"saved to '{partial_path}'."
         )
-        sys.exit(msg)
+        print(msg, file=sys.stderr)
+        sys.exit(1)
 
     # Completed within time: clean up any stale partial file, then return
     if os.path.exists(partial_path):
