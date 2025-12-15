@@ -775,13 +775,14 @@ class MirrorCode():
 
         return sec
     
-    def benchmark(self, p1 : float, p2 : float, num_rounds : int = 3, num_shots : int = 1000):
+    def benchmark(self, p_data : float, p1 : float, p2 : float, num_rounds : int = 3, num_shots : int = 1000):
         """
         Use a decoder to numerically compute the logical error rate of the code.
         We use Tesseract, a heuristic-enhanced BP+OSD-type decoder which natively interacts with stim.
         Oversimplified version of circuit-level noise with no idle noise currently implemented.
 
         Params:
+            * p_data (float): 1-qubit data error probability.
             * p1 (float): 1-qubit error probability.
             * p2 (float): 2-qubit error probability.
             * num_rounds (int): number of syndrome extraction rounds.
@@ -791,56 +792,41 @@ class MirrorCode():
         assert 0 <= p1 <= 3/4, f"1-qubit error probability {p1} must be within [0, 3/4]"
         assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
 
-        print("Making the syndrome extraction circuit...", end='')
-        try:
-            sec = self.syndrome_extraction_circuit(p1, p2, num_rounds, option=0)
-            print("done.")
-        except Exception as e:
-            print(f"\n{e}")
+        print("Making the syndrome extraction circuit...")
+        sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=0)
+        print("Done.")
         
-        print("Creating detector error model...", end='')
-        try:
-            dem = sec.detector_error_model()
-            print("done.")
-        except Exception as e:
-            print(f"\n{e}")
+        print("Creating detector error model...")
+        dem = sec.detector_error_model()
+        print("Done.")
 
-        print("Sampling errors from the model...", end='')
-        try:
-            sampler = sec.compile_detector_sampler()
-            dets, obs = sampler.sample(num_shots, separate_observables=True)
-            print("done.")
-        except Exception as e:
-            print(f"\n{e}")
+        print("Sampling errors from the model...")
+        sampler = sec.compile_detector_sampler()
+        dets, obs = sampler.sample(num_shots, separate_observables=True)
+        print("Done.")
 
-        print("Setting up Tesseract config...", end='')
-        try:
-            tesseract_config = tesseract.TesseractConfig(
-                dem=dem,
-                pqlimit=10000,
-                no_revisit_dets=True,
-                # verbose=True,
-                det_orders=tesseract_decoder.utils.build_det_orders(
-                    dem, num_det_orders=1,
-                    method=tesseract_decoder.utils.DetOrder.DetIndex,
-                    seed=2384753),
-            )
-            print("done.")
-            print(f'Tesseract decoder configurations --> {tesseract_config}\n')
-        except Exception as e:
-            print(f"\n{e}")
+        print("Setting up Tesseract config...")
+        tesseract_config = tesseract.TesseractConfig(
+            dem=dem,
+            pqlimit=10000,
+            no_revisit_dets=True,
+            # verbose=True,
+            det_orders=tesseract_decoder.utils.build_det_orders(
+                dem, num_det_orders=1,
+                method=tesseract_decoder.utils.DetOrder.DetIndex,
+                seed=2384753),
+        )
+        print("Done.")
+        print(f'Tesseract decoder configurations --> {tesseract_config}\n')
         
-        print("Running Tesseract decoder...", end='')
-        try:
-            sampler = sec.compile_detector_sampler()
-            dets, obs = sampler.sample(num_shots, separate_observables=True)
-            tesseract_dec = tesseract_config.compile_decoder()
-            results = run_tesseract_decoder(tesseract_dec, dets, obs)
-            print("done.")
-        except Exception as e:
-            print(f"\n{e}")
-
+        print("Running Tesseract decoder...")
+        sampler = sec.compile_detector_sampler()
+        dets, obs = sampler.sample(num_shots, separate_observables=True)
+        tesseract_dec = tesseract_config.compile_decoder()
+        results = run_tesseract_decoder(tesseract_dec, dets, obs)
+        print("Done.")
         print_decoder_results(results)
+
         return
 
         
@@ -871,6 +857,7 @@ if __name__ == "__main__":
        [1, 1, 2, 0]]
     )
     code.benchmark(
+        p_data = 0.002,
         p1 = 0.001,
         p2 = 0.002,
         num_rounds = 3,
