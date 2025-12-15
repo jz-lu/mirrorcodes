@@ -420,6 +420,45 @@ def append_observable_includes_for_paulis(circuit: stim.Circuit, paulis: list[st
             targets=pauli_to_observable_include_target(pauli=obs),
             arg=i
         )
+    
+def append_noisy_gate(circuit : stim.Circuit, gate : str, locality : int, qubits : list, p : float, after : bool = False):
+    """
+    Inserts a noisy gate into the circuit by adding the desired gate, preceded by a depolarizing error.
+    Only supports 1- and 2-qubit gates. 
+    For a t-qubit gate, t-qubit depolarizing noise will be added after the gate.
+
+    Params:
+        * circuit (stim.Circuit): stim circuit to which the gate is to be added.
+        * gate (str): string description of the gate, e.g. 'RX' or 'CNOT'.
+        * locality (str): number of qubits the gate acts on. Should be in {1, 2}.
+        * qubits (list): the qubits on the circuit on which the gate is applied. 
+            For 1-qubit gate, will apply on every qubit in list. For 2-qubit gate, must be only 2 qubits.
+        * p (float): noise rate parameter, should be in [0, 1].
+        * after (bool): put noise after instead of before the gate (only use when operation is a RESET).
+    
+    Returns:
+        * None (modifies the circuit in place).
+    """
+    assert locality in [1, 2], f"Only 1- and 2-qubit gates supported, but got {locality}-qubit gate request"
+
+    if locality == 1:
+        if after:
+            circuit.append(gate, qubits)
+            circuit.append("DEPOLARIZE1", qubits, p)
+        else:
+            circuit.append("DEPOLARIZE1", qubits, p)
+            circuit.append(gate, qubits)
+    else:
+        if after:
+            circuit.append(gate, qubits)
+            circuit.append("DEPOLARIZE2", qubits, p)
+        else:
+            circuit.append("DEPOLARIZE2", qubits, p)
+            circuit.append(gate, qubits)
+    
+    return
+
+
 
 class MirrorCode():
     """
@@ -500,27 +539,27 @@ class MirrorCode():
     def get_rel_dist(self):
         return self.get_d() / self.get_n()
     
-    def syndrome_extraction_circuit(self, num_rounds=3, option=0) -> stim.Circuit:
+    def syndrome_extraction_circuit(self, p1, p2, num_rounds=3, option=0) -> stim.Circuit:
         """
         Make a syndrome extraction circuit corresponding to the mirror code
         instantiated in this class.
         There is an `option` command which lets you choose from a list of 
         circuits to return (with different fault tolerance capabilities).
         Currently we have an optimized implementation "made by hand" which only 
-        holds w
+        supports weight 6 mirror codes.
 
         Options:
-            0. Not fault-equivalent to the cat-state syndrome extraction circui (SEC), but fewer 2-qubit gates
+            0. Not fault-equivalent to the cat-state syndrome extraction circuit (SEC), but fewer 2-qubit gates
             1. Fault-equivalent to the cat-state SEC.
 
         Params:
+            * p1 (float): 1-qubit error probability parameter
+            * p2 (float): 2-qubit error probability parameter
             * num_rounds (int): number of rounds of syndrome extraction. 
             * option (int): menu of options for which circuit to output
         
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
-        
-        TODO: add noise in the relevant parts of the circuit
         """
         assert self.wz == 3 and self.wx == 3, f"Idk how to make short circuits otherwise"
 
@@ -543,69 +582,72 @@ class MirrorCode():
             # Initialize ancillary system
             for ancilla_block_qubit in range(n, (ANCILLA_PER_STAB+1)*n, ANCILLA_PER_STAB):
                 # Initialize first 2 qubits to |+>
-                sec.append("RX", [ancilla_block_qubit, ancilla_block_qubit + 1])
+                append_noisy_gate(sec, "RX", 1, [ancilla_block_qubit, ancilla_block_qubit + 1], p1, after=True)
 
                 # Initialize last 3 qubits to |0>
-                sec.append("RZ", [ancilla_block_qubit + 2, ancilla_block_qubit + 3, ancilla_block_qubit + 4])
+                append_noisy_gate(sec, "RZ", 1, [ancilla_block_qubit + 2, ancilla_block_qubit + 3, ancilla_block_qubit + 4], p1, after=True)
 
                 # Add a CNOT to make a Bell pair
-                sec.append("CNOT", [ancilla_block_qubit, ancilla_block_qubit + 2])
+                append_noisy_gate(sec, "CNOT", 2, [ancilla_block_qubit, ancilla_block_qubit + 2], p2)
             
             for round_idx in range(num_rounds):
-                # Do the syndrome extraction in parallel for each stabilizer
-                for op in range(6):
-                    for j, stab in enumerate(stabilizers):
-                        Z_part, X_part = stab[:n], stab[n:]
+                # Do the syndrome extraction "in parallel" for each stabilizer
+                # in the obvious way (not depth-optimized, but is OK for zero idle noise)
+                for j, stab in enumerate(stabilizers):
+                    Z_part, X_part = stab[:n], stab[n:]
 
-                        # X part first
-                        X_supp = [i for i in range(n) if X_part[i] != 0]
-                        Z_supp = [i for i in range(n) if Z_part[i] != 0]
-                        assert len(X_supp) == len(Z_supp) == 3
+                    # X part first
+                    X_supp = [i for i in range(n) if X_part[i] != 0]
+                    Z_supp = [i for i in range(n) if Z_part[i] != 0]
+                    assert len(X_supp) == len(Z_supp) == 3
+
+                    for op in range(6):
                         if op <= 2:
                             # CNOT between X check and ancilla
-                            sec.append("CNOT", [X_supp[op], (j+1)*n + op])
+                            append_noisy_gate(sec, "CNOT", 2, [X_supp[op], (j+1)*n + op], p2)
                             if op == 1:
                                 # Do a CNOT between ancillas 0 and 3
-                                sec.append("CNOT", [(j+1)*n, (j+1)*n + 3])
+                                append_noisy_gate(sec, "CNOT", 2, [(j+1)*n, (j+1)*n + 3], p2)
                             elif op == 2:
                                 # Do a CNOT between ancillas 1 and 4
-                                sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 4])
+                                append_noisy_gate(sec, "CNOT", 2, [(j+1)*n + 1, (j+1)*n + 4], p2)
                         elif op <= 5:
                             # CZ between Z check and anncilla
                             if op == 3:
                                 # Also add 2 CNOT gates between the ancillas
-                                sec.append("CZ", [Z_supp[0], (j+1)*n])
-                                sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 3])
-                                sec.append("CNOT", [(j+1)*n + 2, (j+1)*n + 4])
+                                append_noisy_gate(sec, "CZ", 2, [Z_supp[0], (j+1)*n], p2)
+                                append_noisy_gate(sec, "CNOT", 2, [(j+1)*n + 1, (j+1)*n + 3], p2)
+                                append_noisy_gate(sec, "CNOT", 2, [(j+1)*n + 2, (j+1)*n + 4], p2)
                             elif op == 4:
                                 # Also add measurements of last 2 ancillas and detections for some ancillas, then reset
-                                sec.append("CZ", [Z_supp[1], (j+1)*n + 2])
-                                sec.append("MZ", [(j+1)*n + 3, (j+1)*n + 4])
+                                append_noisy_gate(sec, "CZ", 2, [Z_supp[1], (j+1)*n + 2], p2)
+                                append_noisy_gate(sec, "MZ", 1, [(j+1)*n + 3, (j+1)*n + 4], p1)
                                 sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2)])
                             elif op == 5:
-                                sec.append("CZ", [Z_supp[2], (j+1)*n + 1])
-                                sec.append("CNOT", [(j+1)*n, (j+1)*n + 2])
+                                append_noisy_gate(sec, "CZ", 2, [Z_supp[2], (j+1)*n + 1], p2)
+                                append_noisy_gate(sec, "CNOT", 2, [(j+1)*n, (j+1)*n + 2], p2)
                                 # Reset the last 2 ancillas
                                 if round_idx < num_rounds - 1:
-                                    sec.append("RZ", [(j+1)*n + 3])
-                                    sec.append("RX", [(j+1)*n + 4])
+                                    append_noisy_gate(sec, "RZ", 1, [(j+1)*n + 3], p1, after=True)
+                                    append_noisy_gate(sec, "RX", 1, [(j+1)*n + 4], p1, after=True)
                 
                 # If this is the last round, measure the first 3 ancillas and call it a day.
                 # If this is not the last round, also initialize a new Bell pair in parallel.
                 for j in range(n):
-                    sec.append("MX", [(j+1)*n, (j+1)*n + 1]) # measure the first 2 ancillas 
+                    append_noisy_gate(sec, "MX", 1, [(j+1)*n, (j+1)*n + 1], p1)
                     sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2)])
-                    sec.append("MZ", [(j+1)*n + 2]) # measure the third ancilla
+                    append_noisy_gate(sec, "MZ", 1, [(j+1)*n + 2], p1)
                     sec.append("DETECTOR", targets=[stim.target_rec(-1)])
 
                 if round_idx < num_rounds - 1: # more rounds to go
                     for j in range(n):
-                        sec.append("CNOT", [(j+1)*n + 3, (j+1)*n + 4])
+                        append_noisy_gate(sec, "CNOT", 2, [(j+1)*n + 3, (j+1)*n + 4], p2)
 
                         sec.append("SWAP", [(j+1)*n + 3, (j+1)*n]) #! this action should be noiseless
                         sec.append("SWAP", [(j+1)*n + 4, (j+1)*n + 2]) #! this action should be noiseless
 
         elif option == 1:
+            #! TODO: this option is not ready! e.g. no noise implemented, ordering of stab/op is wrong, etc.
             for ancilla_block_qubit in range(n, (ANCILLA_PER_STAB+1)*n, ANCILLA_PER_STAB):
                 # Initialize first 3 qubits to |+>
                 sec.append("RX", [ancilla_block_qubit, ancilla_block_qubit + 1, ancilla_block_qubit + 2])
