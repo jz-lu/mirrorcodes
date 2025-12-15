@@ -589,7 +589,7 @@ class MirrorCode():
     def get_rel_dist(self):
         return self.get_d() / self.get_n()
     
-    def syndrome_extraction_circuit(self, p1, p2, num_rounds=3, option=0) -> stim.Circuit:
+    def syndrome_extraction_circuit(self, p_data, p1, p2, num_rounds=3, option=0) -> stim.Circuit:
         """
         Make a syndrome extraction circuit corresponding to the mirror code
         instantiated in this class.
@@ -603,6 +603,7 @@ class MirrorCode():
             1. Fault-equivalent to the cat-state SEC.
 
         Params:
+            * p_data (float): 1-qubit data error probability parameter in [0, 3/4] (error accrued pre-extraction).
             * p1 (float): 1-qubit error probability parameter in [0, 3/4].
             * p2 (float): 2-qubit error probability parameter in [0, 15/16].
             * num_rounds (int): number of rounds of syndrome extraction. 
@@ -629,6 +630,9 @@ class MirrorCode():
         for stabilizer_stim in stabilizers_stim:
             sec.append("MPP", stabilizer_stim)
         # append_observable_includes_for_paulis(circuit=sec, paulis=all_logicals_paulis)
+
+        # Implement depolarizing noise modeling errors on data qubits accrued while idling in memory (pre-syndrome extraction)
+        sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
 
         if option == 0:
             # Initialize ancillary system
