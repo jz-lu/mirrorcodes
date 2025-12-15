@@ -17,7 +17,21 @@ from util import find_isos, find_strides, shift_X
 from util import binary_rank, symp2Pauli, stimify_symplectic
 from distance import distance, distance_estimate
 import stim
+import tesseract_decoder
+import tesseract_decoder.tesseract as tesseract
+import time
 
+"""
+Part I: Mapping the mirror code parameterization to a canonical stabilizer tableau.
+
+We specify a mirror code by giving an abelian group description (a tuple of prime powers describing a 
+direct product of cyclic groups) and two subsets, the Z subset and the X subset. This fully describes a mirror code.
+The functions in Part I (a) compute the stabilizer tableau of a mirror code description (`find_stabilizers`), 
+(b) check if it is CSS (`css_flips`), and (c) check if the code is "canonical". 
+By canonical, we mean that it is the unique representative under a set of operations which preserve the code.
+These include swapping the Z and X subsets, permuting the elements of the subsets, automorphisms of the group, etc.
+By having a canonical representation, we save a great deal of space during numerical search of the code.
+"""
 
 def _pair_lex_key(group, z0, x0):
     """
@@ -406,6 +420,12 @@ def find_stabilizers(group, z0, x0):
     return stabilizers, can_flip
 
 
+"""
+Part II: stim circuit manipulation
+
+Here we have some custom functions which modify a stim circuit in place for numerical analysis purposes.
+"""
+
 def pauli_to_observable_include_target(pauli: stim.PauliString) -> list[stim.GateTarget]:
     obs_pauli_targets = []
     for i in range(len(pauli)):
@@ -459,7 +479,37 @@ def append_noisy_gate(circuit : stim.Circuit, gate : str, locality : int, qubits
     return
 
 
+"""
+Part III: Tesseract functions
+"""
 
+
+def print_decoder_results(results):
+  print("Tesseract Decoder Stats:")
+  print(f"   Number of Errors / num_shots: {results['num_errors']} / {results['num_shots']}")
+  print(f"   Time: {results['time_seconds']:.4f} s")
+
+
+def run_tesseract_decoder(decoder, dets, obs):
+  # Run and time the Tesseract decoder
+  num_errors = 0
+  start_time = time.time()
+  obs_predicted = decoder.decode_batch(dets)
+  num_errors = np.sum(np.any(obs_predicted != obs, axis=1))
+  end_time = time.time()
+
+  return {
+      'num_errors': num_errors,
+      'num_shots': len(dets),
+      'time_seconds': end_time - start_time,
+  }
+
+
+
+"""
+Main class: MirrorCode
+This is the class which holds all the basic functionality of a mirror code, specified by the (group, X_set, Z_set) description.
+"""
 class MirrorCode():
     """
     Class structure for a mirror code, specified by an abelian group, 
@@ -553,8 +603,8 @@ class MirrorCode():
             1. Fault-equivalent to the cat-state SEC.
 
         Params:
-            * p1 (float): 1-qubit error probability parameter
-            * p2 (float): 2-qubit error probability parameter
+            * p1 (float): 1-qubit error probability parameter in [0, 3/4].
+            * p2 (float): 2-qubit error probability parameter in [0, 15/16].
             * num_rounds (int): number of rounds of syndrome extraction. 
             * option (int): menu of options for which circuit to output
         
@@ -562,6 +612,8 @@ class MirrorCode():
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
         assert self.wz == 3 and self.wx == 3, f"Idk how to make short circuits otherwise"
+        assert 0 <= p1 <= 3/4, f"1-qubit error probability {p1} must be within [0, 3/4]"
+        assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
 
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         sec = stim.Circuit()
@@ -714,13 +766,80 @@ class MirrorCode():
                                     # Detect D + F + (same but previous round) == 0
                                     sec.append("DETECTOR", targets=[stim.target_rec(-7*n-1), stim.target_rec(-6*n-1), stim.target_rec(-n-1), stim.target_rec(-1)]) 
 
-
-
         else:
             raise ValueError(f"Option {option} is not a valid choice!")
 
         return sec
+    
+    def benchmark(self, p1 : float, p2 : float, num_rounds : int = 3, num_shots : int = 1000):
+        """
+        Use a decoder to numerically compute the logical error rate of the code.
+        We use Tesseract, a heuristic-enhanced BP+OSD-type decoder which natively interacts with stim.
+        Oversimplified version of circuit-level noise with no idle noise currently implemented.
 
+        Params:
+            * p1 (float): 1-qubit error probability.
+            * p2 (float): 2-qubit error probability.
+            * num_rounds (int): number of syndrome extraction rounds.
+            * num_shots (int): number of trials to make during benchmarking
+
+        """
+        assert 0 <= p1 <= 3/4, f"1-qubit error probability {p1} must be within [0, 3/4]"
+        assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
+
+        print("Making the syndrome extraction circuit...", end='')
+        try:
+            sec = self.syndrome_extraction_circuit(p1, p2, num_rounds, option=0)
+            print("done.")
+        except Exception as e:
+            print(f"\n{e}")
+        
+        print("Creating detector error model...", end='')
+        try:
+            dem = sec.detector_error_model()
+            print("done.")
+        except Exception as e:
+            print(f"\n{e}")
+
+        print("Sampling errors from the model...", end='')
+        try:
+            sampler = sec.compile_detector_sampler()
+            dets, obs = sampler.sample(num_shots, separate_observables=True)
+            print("done.")
+        except Exception as e:
+            print(f"\n{e}")
+
+        print("Setting up Tesseract config...", end='')
+        try:
+            tesseract_config = tesseract.TesseractConfig(
+                dem=dem,
+                pqlimit=10000,
+                no_revisit_dets=True,
+                # verbose=True,
+                det_orders=tesseract_decoder.utils.build_det_orders(
+                    dem, num_det_orders=1,
+                    method=tesseract_decoder.utils.DetOrder.DetIndex,
+                    seed=2384753),
+            )
+            print("done.")
+            print(f'Tesseract decoder configurations --> {tesseract_config}\n')
+        except Exception as e:
+            print(f"\n{e}")
+        
+        print("Running Tesseract decoder...", end='')
+        try:
+            sampler = sec.compile_detector_sampler()
+            dets, obs = sampler.sample(num_shots, separate_observables=True)
+            tesseract_dec = tesseract_config.compile_decoder()
+            results = run_tesseract_decoder(tesseract_dec, dets, obs)
+            print("done.")
+        except Exception as e:
+            print(f"\n{e}")
+
+        print_decoder_results(results)
+        return
+
+        
 
 if __name__ == "__main__":
     """
