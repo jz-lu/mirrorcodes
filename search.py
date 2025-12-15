@@ -29,7 +29,7 @@ from util import find_strides, index_to_array, partitions
 # Global time limit (per *call* to find_all_codes)
 # ============================================================
 
-TIME_LIMIT_SECONDS = 36000
+TIME_LIMIT_SECONDS = 28800
 
 
 def _elapsed(start_time: float) -> float:
@@ -204,6 +204,7 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float):
     # Resume from snapshot if present
     if os.path.exists(inprog_path):
         with open(inprog_path, "rb") as f:
+            print(inprog_path)
             data = pickle.load(f)
         good = data.get("good", [])
         candidates = data.get("candidates", [[np.zeros(r, dtype=np.int16)]])
