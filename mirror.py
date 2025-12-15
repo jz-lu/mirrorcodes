@@ -851,14 +851,30 @@ if __name__ == "__main__":
     """
 
     # Make some CSS codes and check if they are CSS
-    CSS_group = (4, 7, 3)
-    n = int(np.prod(CSS_group))
-    X0 = ((0, 4, 1), (2, 3, 2))
-    Z0 = ((1, 6, 2), (3, 1, 0), (1, 1, 1))
-    print(canonicalize(CSS_group, X0, Z0))
-    CSS_stabs = find_stabilizers(CSS_group, Z0, X0)
-    print(f"Your CSS stabs are:")
-    for stab in CSS_stabs[0]:
-        print(symp2Pauli(stab, n))
+    # CSS_group = (4, 7, 3)
+    # n = int(np.prod(CSS_group))
+    # X0 = ((0, 4, 1), (2, 3, 2))
+    # Z0 = ((1, 6, 2), (3, 1, 0), (1, 1, 1))
+    # print(canonicalize(CSS_group, X0, Z0))
+    # CSS_stabs = find_stabilizers(CSS_group, Z0, X0)
+    # print(f"Your CSS stabs are:")
+    # for stab in CSS_stabs[0]:
+    #     print(symp2Pauli(stab, n))
+
+    code = MirrorCode(
+        group = [2, 2, 3, 3],
+        z0 = [[0, 0, 0, 0],
+       [0, 1, 0, 1],
+       [1, 0, 0, 2]],
+        x0 = [[0, 0, 0, 0],
+       [0, 1, 1, 0],
+       [1, 1, 2, 0]]
+    )
+    code.benchmark(
+        p1 = 0.001,
+        p2 = 0.002,
+        num_rounds = 3,
+        num_shots = 1000
+    )
 
     # Make some non-CSS codes and check if they are CSS
