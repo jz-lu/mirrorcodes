@@ -17,8 +17,8 @@ from util import find_isos, find_strides, shift_X
 from util import binary_rank, symp2Pauli, stimify_symplectic
 from distance import distance, distance_estimate
 import stim
-import tesseract_decoder
-import tesseract_decoder.tesseract as tesseract
+# import tesseract_decoder
+# import tesseract_decoder.tesseract as tesseract
 import time
 
 """
@@ -691,7 +691,12 @@ class MirrorCode():
                 # If this is not the last round, also initialize a new Bell pair in parallel.
                 for j in range(n):
                     append_noisy_gate(sec, "MX", 1, [(j+1)*n, (j+1)*n + 1], p1)
-                    sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2)])
+                    if round_idx == 0:
+                        sec.append("DETECTOR", targets=[stim.target_rec(-(3*n+j+2)), stim.target_rec(-1), stim.target_rec(-2)])
+                    else:
+                        sec.append("DETECTOR", targets=[stim.target_rec(-(4*n+2)), stim.target_rec(-(4*n+1)), stim.target_rec(-1), stim.target_rec(-2)])
+
+                for j in range(n):
                     append_noisy_gate(sec, "MZ", 1, [(j+1)*n + 2], p1)
                     sec.append("DETECTOR", targets=[stim.target_rec(-1)])
 
@@ -805,27 +810,27 @@ class MirrorCode():
         dets, obs = sampler.sample(num_shots, separate_observables=True)
         print("Done.")
 
-        print("Setting up Tesseract config...")
-        tesseract_config = tesseract.TesseractConfig(
-            dem=dem,
-            pqlimit=10000,
-            no_revisit_dets=True,
-            # verbose=True,
-            det_orders=tesseract_decoder.utils.build_det_orders(
-                dem, num_det_orders=1,
-                method=tesseract_decoder.utils.DetOrder.DetIndex,
-                seed=2384753),
-        )
-        print("Done.")
-        print(f'Tesseract decoder configurations --> {tesseract_config}\n')
+        # print("Setting up Tesseract config...")
+        # tesseract_config = tesseract.TesseractConfig(
+        #     dem=dem,
+        #     pqlimit=10000,
+        #     no_revisit_dets=True,
+        #     # verbose=True,
+        #     det_orders=tesseract_decoder.utils.build_det_orders(
+        #         dem, num_det_orders=1,
+        #         method=tesseract_decoder.utils.DetOrder.DetIndex,
+        #         seed=2384753),
+        # )
+        # print("Done.")
+        # print(f'Tesseract decoder configurations --> {tesseract_config}\n')
         
-        print("Running Tesseract decoder...")
-        sampler = sec.compile_detector_sampler()
-        dets, obs = sampler.sample(num_shots, separate_observables=True)
-        tesseract_dec = tesseract_config.compile_decoder()
-        results = run_tesseract_decoder(tesseract_dec, dets, obs)
-        print("Done.")
-        print_decoder_results(results)
+        # print("Running Tesseract decoder...")
+        # sampler = sec.compile_detector_sampler()
+        # dets, obs = sampler.sample(num_shots, separate_observables=True)
+        # tesseract_dec = tesseract_config.compile_decoder()
+        # results = run_tesseract_decoder(tesseract_dec, dets, obs)
+        # print("Done.")
+        # print_decoder_results(results)
 
         return
 
@@ -860,7 +865,7 @@ if __name__ == "__main__":
         p_data = 0.002,
         p1 = 0.001,
         p2 = 0.002,
-        num_rounds = 3,
+        num_rounds = 1,
         num_shots = 1000
     )
 
