@@ -18,8 +18,8 @@ from util import binary_rank, symp2Pauli, stimify_symplectic
 from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
-# import tesseract_decoder
-# import tesseract_decoder.tesseract as tesseract
+import tesseract_decoder
+import tesseract_decoder.tesseract as tesseract
 import time
 
 """
@@ -558,6 +558,7 @@ class MirrorCode():
         Get the logical Paulis in stim Pauli form, concatenated together in one list.
         """
         z, x = make_code(self.get_stim_tableau())[1:]
+        self.stim_logical_paulis = [z, x]
         return z + x
 
     def get_n(self):
@@ -825,18 +826,18 @@ class MirrorCode():
         stabilizers_stim = stimify_symplectic(stabilizers)
         all_logical_paulis = self.get_stim_logical_paulis()
 
+        for ancilla_block_qubit in range(n, 2*n):
+            sec.append("RX", [ancilla_block_qubit])
+
         # Do some perfect measurements before we get into actual extraction for detection purposes.
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+
         for stabilizer_stim in stabilizers_stim:
             sec.append("MPP", stabilizer_stim)
         # Implement depolarizing noise modeling errors on data qubits accrued while idling in memory (pre-syndrome extraction)
         sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
 
-        #! TODO: this option is not ready! e.g. no noise implemented, ordering of stab/op is wrong, etc.
-        for ancilla_block_qubit in range(n, 2*n):
-            sec.append("RX", [ancilla_block_qubit])
-
-        for round_idx in range(num_rounds):
+        for _ in range(num_rounds):
             # Do the syndrome extraction in parallel for each stabilizer
             for j, stab in enumerate(stabilizers):
                 Z_part, X_part = stab[:n], stab[n:]
@@ -850,14 +851,46 @@ class MirrorCode():
                         # CNOT between X check and ancilla
                         sec.append("CNOT", [n + j, X_supp[op]])
                     elif op < len(X_supp) + len(Z_supp):
-                        # CZ between Z check and anncilla
+                        # CZ between Z check and ancilla
                         sec.append("CZ", [n + j, Z_supp[op - len(X_supp)]])
                     else:
                         sec.append("MX", [n + j])
-                        sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-n-1)]) 
+        
+        for i in range(num_rounds):
+            sec.append("DETECTOR", targets=[stim.target_rec(-(1 + i*n)), stim.target_rec(-(1 + (i+1)*n))])
 
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
+    
+    def generic_sec(self, p_data, p1, p2, num_rounds):
+        """
+        A generic "fake"/unphysical syndrome extraction circuit which should work for any stabilizer tableau.
+        """
+        num_qubits = num_stabilizers = self.get_n()
+        stabilizer_paulis = self.get_stim_tableau()
+        all_logicals_paulis = self.get_stim_logical_paulis()
+
+        circuit = stim.Circuit()
+
+        append_observable_includes_for_paulis(
+            circuit=circuit, paulis=all_logicals_paulis)
+        circuit.append("MPP", stabilizer_paulis)
+        circuit.append("DEPOLARIZE1", targets=list(range(num_qubits)), arg=p_data)
+
+        for _ in range(num_rounds):
+            circuit.append("MPP", stabilizer_paulis)
+
+            for i in range(num_stabilizers):
+                circuit.append(
+                    "DETECTOR",
+                    targets=[
+                        stim.target_rec(i - 2 * num_stabilizers),
+                        stim.target_rec(i - num_stabilizers)
+                    ]
+                )
+
+        append_observable_includes_for_paulis(circuit=circuit, paulis=all_logicals_paulis)
+        return circuit
 
     def benchmark(self, p_data : float, p1 : float, p2 : float, num_rounds : int = 3, num_shots : int = 1000):
         """
@@ -890,27 +923,27 @@ class MirrorCode():
         dets, obs = sampler.sample(num_shots, separate_observables=True)
         print("Done.")
 
-        # print("Setting up Tesseract config...")
-        # tesseract_config = tesseract.TesseractConfig(
-        #     dem=dem,
-        #     pqlimit=10000,
-        #     no_revisit_dets=True,
-        #     # verbose=True,
-        #     det_orders=tesseract_decoder.utils.build_det_orders(
-        #         dem, num_det_orders=1,
-        #         method=tesseract_decoder.utils.DetOrder.DetIndex,
-        #         seed=2384753),
-        # )
-        # print("Done.")
-        # print(f'Tesseract decoder configurations --> {tesseract_config}\n')
+        print("Setting up Tesseract config...")
+        tesseract_config = tesseract.TesseractConfig(
+            dem=dem,
+            pqlimit=10000,
+            no_revisit_dets=True,
+            # verbose=True,
+            det_orders=tesseract_decoder.utils.build_det_orders(
+                dem, num_det_orders=1,
+                method=tesseract_decoder.utils.DetOrder.DetIndex,
+                seed=2384753),
+        )
+        print("Done.")
+        print(f'Tesseract decoder configurations --> {tesseract_config}\n')
         
-        # print("Running Tesseract decoder...")
-        # sampler = sec.compile_detector_sampler()
-        # dets, obs = sampler.sample(num_shots, separate_observables=True)
-        # tesseract_dec = tesseract_config.compile_decoder()
-        # results = run_tesseract_decoder(tesseract_dec, dets, obs)
-        # print("Done.")
-        # print_decoder_results(results)
+        print("Running Tesseract decoder...")
+        sampler = sec.compile_detector_sampler()
+        dets, obs = sampler.sample(num_shots, separate_observables=True)
+        tesseract_dec = tesseract_config.compile_decoder()
+        results = run_tesseract_decoder(tesseract_dec, dets, obs)
+        print("Done.")
+        print_decoder_results(results)
 
         return
 
@@ -941,7 +974,13 @@ if __name__ == "__main__":
     #    [0, 1, 1, 0],
     #    [1, 1, 2, 0]]
     # )
-    code = MirrorCode([2, 2], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
+
+    code = MirrorCode([3, 3], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
+    # code = MirrorCode([2, 2], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
+
+
+    print(code.get_stim_tableau())
+    print(code.get_stim_logical_paulis())
     code.benchmark(
         p_data = 0.2,
         p1 = 0.1,
