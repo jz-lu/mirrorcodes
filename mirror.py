@@ -735,7 +735,7 @@ class MirrorCode():
                         assert len(X_supp) == len(Z_supp) == 3
                         if op <= 2:
                             # CNOT between X check and ancilla
-                            sec.append("CNOT", [X_supp[op], (j+1)*n + op])
+                            sec.append("CNOT", [(j+1)*n + op, X_supp[op]])
                             if op == 1:
                                 # Do a CNOT between ancillas 0 and 3
                                 sec.append("CNOT", [(j+1)*n, (j+1)*n + 3])
