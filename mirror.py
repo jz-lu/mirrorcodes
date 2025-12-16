@@ -690,14 +690,14 @@ class MirrorCode():
                 # If this is the last round, measure the first 3 ancillas and call it a day.
                 # If this is not the last round, also initialize a new Bell pair in parallel.
                 for j in range(n):
-                    append_noisy_gate(sec, "MX", 1, [(j+1)*n, (j+1)*n + 1], p1)
+                    append_noisy_gate(sec, "MRX", 1, [(j+1)*n, (j+1)*n + 1], p1)
                     if round_idx == 0:
                         sec.append("DETECTOR", targets=[stim.target_rec(-(3*n+j+2)), stim.target_rec(-1), stim.target_rec(-2)])
                     else:
                         sec.append("DETECTOR", targets=[stim.target_rec(-(4*n+2)), stim.target_rec(-(4*n+1)), stim.target_rec(-1), stim.target_rec(-2)])
 
                 for j in range(n):
-                    append_noisy_gate(sec, "MZ", 1, [(j+1)*n + 2], p1)
+                    append_noisy_gate(sec, "MRZ", 1, [(j+1)*n + 2], p1)
                     sec.append("DETECTOR", targets=[stim.target_rec(-1)])
 
                 if round_idx < num_rounds - 1: # more rounds to go
@@ -718,8 +718,8 @@ class MirrorCode():
 
             for round_idx in range(num_rounds):
                 # Do the syndrome extraction in parallel for each stabilizer
-                for op in range(9):
-                    for j, stab in enumerate(stabilizers):
+                for j, stab in enumerate(stabilizers):
+                    for op in range(9):
                         Z_part, X_part = stab[:n], stab[n:]
 
                         # X part first
@@ -744,36 +744,37 @@ class MirrorCode():
                                 sec.append("CNOT", [(j+1)*n + 2, (j+1)*n + 4])
                                 sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 5])
                                 # Add measurement of ancilla 3
-                                sec.append("MZ", [(j+1)*n + 3]) # A
+                                sec.append("MRZ", [(j+1)*n + 3]) # A
                             elif op == 4:
                                 # Add some CNOTs and measurements
                                 sec.append("CZ", [Z_supp[1], (j+1)*n + 1])
                                 sec.append("CNOT", [(j+1)*n + 2, (j+1)*n + 5])
-                                sec.append("MZ", [(j+1)*n + 4]) # B
+                                sec.append("MRZ", [(j+1)*n + 4]) # B
                             elif op == 5:
                                 sec.append("CZ", [Z_supp[2], (j+1)*n + 2])
                                 sec.append("CNOT", [(j+1)*n, (j+1)*n + 1])
-                                sec.append("MZ", [(j+1)*n + 5]) # C
+                                sec.append("MRZ", [(j+1)*n + 5]) # C
 
                                 # Detector for A + B + C == 0
-                                sec.append("DETECTOR", targets=[stim.target_rec(-2*n-1), stim.target_rec(-n-1), stim.target_rec(-1)])
+                                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-3)])
                             elif op == 6:
                                 # Remaining measurements and detectors
                                 sec.append("MZ", [(j+1)*n + 1]) # E
+                                sec.append("RX", [(j+1)*n + 1]) # E reset
 
                                 # Detector for A + E == 0
-                                sec.append("DETECTOR", targets=[stim.target_rec(-3*n-1), stim.target_rec(-1)]) 
+                                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-4)]) 
                             elif op == 7:
-                                sec.append("MX", [(j+1)*n + 0]) # D
+                                sec.append("MRX", [(j+1)*n + 0]) # D
                             elif op == 8:
-                                sec.append("MX", [(j+1)*n + 2]) # F
+                                sec.append("MRX", [(j+1)*n + 2]) # F
 
                                 if round_idx == 0:
                                     # Detect D + F + (corresponding stabilizer measurement) == 0
-                                    sec.append("DETECTOR", targets=[stim.target_rec(-6*n-1), stim.target_rec(-n-1), stim.target_rec(-1)]) 
+                                    sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(5*j+n+1))]) 
                                 else:
                                     # Detect D + F + (same but previous round) == 0
-                                    sec.append("DETECTOR", targets=[stim.target_rec(-7*n-1), stim.target_rec(-6*n-1), stim.target_rec(-n-1), stim.target_rec(-1)]) 
+                                    sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(6*n+1)), stim.target_rec(-(6*n+2))]) 
 
         else:
             raise ValueError(f"Option {option} is not a valid choice!")
@@ -798,7 +799,7 @@ class MirrorCode():
         assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
 
         print("Making the syndrome extraction circuit...")
-        sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=0)
+        sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=1)
         print("Done.")
         
         print("Creating detector error model...")
