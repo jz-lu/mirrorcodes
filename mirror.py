@@ -15,6 +15,7 @@ import itertools as it
 import numpy as np
 from util import find_isos, find_strides, shift_X
 from util import binary_rank, symp2Pauli, stimify_symplectic
+from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
 # import tesseract_decoder
@@ -632,6 +633,7 @@ class MirrorCode():
         n = self.get_n()
         stabilizers_stim = stimify_symplectic(stabilizers)
         all_logical_paulis = self.get_stim_logical_paulis()
+        print(all_logical_paulis)
 
         # Do some perfect measurements before we get into actual extraction for detection purposes.
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
@@ -735,7 +737,7 @@ class MirrorCode():
                         assert len(X_supp) == len(Z_supp) == 3
                         if op <= 2:
                             # CNOT between X check and ancilla
-                            sec.append("CNOT", [X_supp[op], (j+1)*n + op])
+                            sec.append("CNOT", [(j+1)*n + op, X_supp[op]])
                             if op == 1:
                                 # Do a CNOT between ancillas 0 and 3
                                 sec.append("CNOT", [(j+1)*n, (j+1)*n + 3])
@@ -789,6 +791,74 @@ class MirrorCode():
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
     
+    def bare_ancilla_sec(self, p_data, p1, p2, num_rounds=3) -> stim.Circuit:
+        """
+        Make a syndrome extraction circuit corresponding to the mirror code
+        instantiated in this class.
+        There is an `option` command which lets you choose from a list of 
+        circuits to return (with different fault tolerance capabilities).
+        Currently we have an optimized implementation "made by hand" which only 
+        supports weight 6 mirror codes.
+
+        Options:
+            0. Not fault-equivalent to the cat-state syndrome extraction circuit (SEC), but fewer 2-qubit gates
+            1. Fault-equivalent to the cat-state SEC.
+
+        Params:
+            * p_data (float): 1-qubit data error probability parameter in [0, 3/4] (error accrued pre-extraction).
+            * p1 (float): 1-qubit error probability parameter in [0, 3/4].
+            * p2 (float): 2-qubit error probability parameter in [0, 15/16].
+            * num_rounds (int): number of rounds of syndrome extraction. 
+            * option (int): menu of options for which circuit to output
+        
+        Returns:
+            * stim.Circuit object of the syndrome extraction circuit for the mirror code.
+        """
+        # assert self.wz == 3 and self.wx == 3, f"Idk how to make short circuits otherwise"
+        assert 0 <= p1 <= 3/4, f"1-qubit error probability {p1} must be within [0, 3/4]"
+        assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
+
+        # The first n qubits are the data qubits, and will be the controls for the syndromes.
+        sec = stim.Circuit()
+        stabilizers = self.get_stabilizers()
+        n = self.get_n()
+        stabilizers_stim = stimify_symplectic(stabilizers)
+        all_logical_paulis = self.get_stim_logical_paulis()
+
+        # Do some perfect measurements before we get into actual extraction for detection purposes.
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        for stabilizer_stim in stabilizers_stim:
+            sec.append("MPP", stabilizer_stim)
+        # Implement depolarizing noise modeling errors on data qubits accrued while idling in memory (pre-syndrome extraction)
+        sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
+
+        #! TODO: this option is not ready! e.g. no noise implemented, ordering of stab/op is wrong, etc.
+        for ancilla_block_qubit in range(n, 2*n):
+            sec.append("RX", [ancilla_block_qubit])
+
+        for round_idx in range(num_rounds):
+            # Do the syndrome extraction in parallel for each stabilizer
+            for j, stab in enumerate(stabilizers):
+                Z_part, X_part = stab[:n], stab[n:]
+                X_supp = [i for i in range(n) if X_part[i] != 0]
+                Z_supp = [i for i in range(n) if Z_part[i] != 0]
+                for op in range(len(X_supp) + len(Z_supp) + 1):
+
+                    # X part first
+                    #assert len(X_supp) == len(Z_supp) == 3
+                    if op < len(X_supp):
+                        # CNOT between X check and ancilla
+                        sec.append("CNOT", [n + j, X_supp[op]])
+                    elif op < len(X_supp) + len(Z_supp):
+                        # CZ between Z check and anncilla
+                        sec.append("CZ", [n + j, Z_supp[op - len(X_supp)]])
+                    else:
+                        sec.append("MX", [n + j])
+                        sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-n-1)]) 
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        return sec
+
     def benchmark(self, p_data : float, p1 : float, p2 : float, num_rounds : int = 3, num_shots : int = 1000):
         """
         Use a decoder to numerically compute the logical error rate of the code.
@@ -807,7 +877,8 @@ class MirrorCode():
         assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
 
         print("Making the syndrome extraction circuit...")
-        sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=1)
+        # sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=1)
+        sec = self.bare_ancilla_sec(p_data, p1, p2, num_rounds)
         print("Done.")
         
         print("Creating detector error model...")
@@ -861,15 +932,16 @@ if __name__ == "__main__":
     # for stab in CSS_stabs[0]:
     #     print(symp2Pauli(stab, n))
 
-    code = MirrorCode(
-        group = [2, 2, 3, 3],
-        z0 = [[0, 0, 0, 0],
-       [0, 1, 0, 1],
-       [1, 0, 0, 2]],
-        x0 = [[0, 0, 0, 0],
-       [0, 1, 1, 0],
-       [1, 1, 2, 0]]
-    )
+    # code = MirrorCode(
+    #     group = [2, 2, 3, 3],
+    #     z0 = [[0, 0, 0, 0],
+    #    [0, 1, 0, 1],
+    #    [1, 0, 0, 2]],
+    #     x0 = [[0, 0, 0, 0],
+    #    [0, 1, 1, 0],
+    #    [1, 1, 2, 0]]
+    # )
+    code = MirrorCode([2, 2], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
     code.benchmark(
         p_data = 0.2,
         p1 = 0.1,
