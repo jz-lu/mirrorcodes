@@ -47,7 +47,7 @@ def make_code(stabilizers):
         for k in obs_indices
     ]
 
-    return stabilizers, observable_xs, observable_zs
+    return stabilizers, observable_zs, observable_xs
 
 def CSS_make_circuit(stabilizers, logical_paulis, obs_type):
     """
@@ -184,7 +184,7 @@ def stab_make_circuit(stabilizers, logical_paulis):
 
 
 def circuit_from_tableau(stim_stab_tableau):
-    stabilizers, obs_xs, obs_zs = make_code(stim_stab_tableau)
+    stabilizers, obs_zs, obs_xs = make_code(stim_stab_tableau)
     r = len(stabilizers); k = len(obs_xs) # r = num stabs = n - k
     obs = [*obs_xs, *obs_zs]
     t0 = time.monotonic()
@@ -216,7 +216,7 @@ def distance(stim_stab_tableau, IS_CSS = False, verbose = True):
     Function adapted from code written by Craig Gidney on a StackExchange post.
     https://quantumcomputing.stackexchange.com/questions/37289/compute-the-exact-minimum-distance-of-a-qecc-with-integer-linear-programming-met
     """
-    stabilizers, obs_xs, obs_zs = make_code(stim_stab_tableau)
+    stabilizers, obs_zs, obs_xs = make_code(stim_stab_tableau)
     r = len(stabilizers); k = len(obs_xs) # r = num stabs = n - k
     if verbose:
         print(f"Code is [[r, k]] = [[{r}, {k}]]")

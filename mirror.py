@@ -15,7 +15,7 @@ import itertools as it
 import numpy as np
 from util import find_isos, find_strides, shift_X
 from util import binary_rank, symp2Pauli, stimify_symplectic
-from distance import distance, distance_estimate
+from distance import distance, distance_estimate, make_code
 import stim
 # import tesseract_decoder
 # import tesseract_decoder.tesseract as tesseract
@@ -551,6 +551,13 @@ class MirrorCode():
         if self.stim_tableau is None:
             self.stim_tableau = stimify_symplectic(self.get_stabilizers())
         return self.stim_tableau
+    
+    def get_stim_logical_paulis(self):
+        """
+        Get the logical Paulis in stim Pauli form, concatenated together in one list.
+        """
+        z, x = make_code(self.get_stim_tableau())[1:]
+        return z + x
 
     def get_n(self):
         if self.n is None:
@@ -624,12 +631,12 @@ class MirrorCode():
             ANCILLA_PER_STAB = 6
         n = self.get_n()
         stabilizers_stim = stimify_symplectic(stabilizers)
+        all_logical_paulis = self.get_stim_logical_paulis()
 
         # Do some perfect measurements before we get into actual extraction for detection purposes.
-        # append_observable_includes_for_paulis(circuit=sec, paulis=all_logicals_paulis)
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         for stabilizer_stim in stabilizers_stim:
             sec.append("MPP", stabilizer_stim)
-        # append_observable_includes_for_paulis(circuit=sec, paulis=all_logicals_paulis)
 
         # Implement depolarizing noise modeling errors on data qubits accrued while idling in memory (pre-syndrome extraction)
         sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
@@ -779,6 +786,7 @@ class MirrorCode():
         else:
             raise ValueError(f"Option {option} is not a valid choice!")
 
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
     
     def benchmark(self, p_data : float, p1 : float, p2 : float, num_rounds : int = 3, num_shots : int = 1000):
@@ -863,9 +871,9 @@ if __name__ == "__main__":
        [1, 1, 2, 0]]
     )
     code.benchmark(
-        p_data = 0.002,
-        p1 = 0.001,
-        p2 = 0.002,
+        p_data = 0.2,
+        p1 = 0.1,
+        p2 = 0.2,
         num_rounds = 1,
         num_shots = 1000
     )
