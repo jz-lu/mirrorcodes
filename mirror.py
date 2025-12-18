@@ -826,11 +826,9 @@ class MirrorCode():
         stabilizers_stim = stimify_symplectic(stabilizers)
         all_logical_paulis = self.get_stim_logical_paulis()
 
-        for ancilla_block_qubit in range(n, 2*n):
-            sec.append("RX", [ancilla_block_qubit])
-
         # Do some perfect measurements before we get into actual extraction for detection purposes.
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+
 
         for stabilizer_stim in stabilizers_stim:
             sec.append("MPP", stabilizer_stim)
@@ -841,23 +839,18 @@ class MirrorCode():
             # Do the syndrome extraction in parallel for each stabilizer
             for j, stab in enumerate(stabilizers):
                 Z_part, X_part = stab[:n], stab[n:]
-                X_supp = [i for i in range(n) if X_part[i] != 0]
-                Z_supp = [i for i in range(n) if Z_part[i] != 0]
-                for op in range(len(X_supp) + len(Z_supp) + 1):
-
-                    # X part first
-                    #assert len(X_supp) == len(Z_supp) == 3
-                    if op < len(X_supp):
-                        # CNOT between X check and ancilla
-                        sec.append("CNOT", [n + j, X_supp[op]])
-                    elif op < len(X_supp) + len(Z_supp):
-                        # CZ between Z check and ancilla
-                        sec.append("CZ", [n + j, Z_supp[op - len(X_supp)]])
-                    else:
-                        sec.append("MX", [n + j])
-        
-        for i in range(num_rounds):
-            sec.append("DETECTOR", targets=[stim.target_rec(-(1 + i*n)), stim.target_rec(-(1 + (i+1)*n))])
+                X_supp = [i for i in range(n) if X_part[i] != 0 and Z_part[i] == 0]
+                Z_supp = [i for i in range(n) if Z_part[i] != 0 and X_part[i] == 0]
+                Y_supp = [i for i in range(n) if Z_part[i] != 0 and X_part[i] != 0]
+                sec.append("RX", [n + j])
+                for q in X_supp:
+                    sec.append("CNOT", [n + j, q])
+                for q in Z_supp:
+                    sec.append("CZ", [n + j, q])
+                for q in Y_supp:
+                    sec.append("CY", [n + j, q])
+                sec.append("MX", [n + j])
+                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-(n + 1))])
 
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
@@ -923,27 +916,27 @@ class MirrorCode():
         dets, obs = sampler.sample(num_shots, separate_observables=True)
         print("Done.")
 
-        print("Setting up Tesseract config...")
-        tesseract_config = tesseract.TesseractConfig(
-            dem=dem,
-            pqlimit=10000,
-            no_revisit_dets=True,
-            # verbose=True,
-            det_orders=tesseract_decoder.utils.build_det_orders(
-                dem, num_det_orders=1,
-                method=tesseract_decoder.utils.DetOrder.DetIndex,
-                seed=2384753),
-        )
-        print("Done.")
-        print(f'Tesseract decoder configurations --> {tesseract_config}\n')
+        # print("Setting up Tesseract config...")
+        # tesseract_config = tesseract.TesseractConfig(
+        #     dem=dem,
+        #     pqlimit=10000,
+        #     no_revisit_dets=True,
+        #     # verbose=True,
+        #     det_orders=tesseract_decoder.utils.build_det_orders(
+        #         dem, num_det_orders=1,
+        #         method=tesseract_decoder.utils.DetOrder.DetIndex,
+        #         seed=2384753),
+        # )
+        # print("Done.")
+        # print(f'Tesseract decoder configurations --> {tesseract_config}\n')
         
-        print("Running Tesseract decoder...")
-        sampler = sec.compile_detector_sampler()
-        dets, obs = sampler.sample(num_shots, separate_observables=True)
-        tesseract_dec = tesseract_config.compile_decoder()
-        results = run_tesseract_decoder(tesseract_dec, dets, obs)
-        print("Done.")
-        print_decoder_results(results)
+        # print("Running Tesseract decoder...")
+        # sampler = sec.compile_detector_sampler()
+        # dets, obs = sampler.sample(num_shots, separate_observables=True)
+        # tesseract_dec = tesseract_config.compile_decoder()
+        # results = run_tesseract_decoder(tesseract_dec, dets, obs)
+        # print("Done.")
+        # print_decoder_results(results)
 
         return
 
@@ -985,7 +978,7 @@ if __name__ == "__main__":
         p_data = 0.2,
         p1 = 0.1,
         p2 = 0.2,
-        num_rounds = 1,
+        num_rounds = 3,
         num_shots = 1000
     )
 
