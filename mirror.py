@@ -18,8 +18,8 @@ from util import binary_rank, symp2Pauli, stimify_symplectic
 from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
-#import tesseract_decoder
-#import tesseract_decoder.tesseract as tesseract
+import tesseract_decoder
+import tesseract_decoder.tesseract as tesseract
 import time
 
 """
@@ -767,31 +767,104 @@ class MirrorCode():
 
                                 # Detector for A + B + C == 0
                                 sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-3)])
-                            elif op == 6:
-                                # Remaining measurements and detectors
-                                sec.append("MZ", [base + 1]) # E
-                                sec.append("RX", [base + 1]) # E reset
 
-                                # Detector for A + E == 0
-                                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-4)]) 
-                            elif op == 7:
-                                sec.append("MRX", [base + 0]) # D
-                            elif op == 8:
-                                sec.append("MRX", [base + 2]) # F
+                        elif op == 6:
+                            # Remaining measurements and detectors
+                            sec.append("MZ", [base + 1]) # E
+                            sec.append("RX", [base + 1]) # E reset
 
-                                if round_idx == 0:
-                                    # Detect D + F + (corresponding stabilizer measurement) == 0
-                                    sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(5*j+n+6))]) 
-                                else:
-                                    # Detect D + F + (same but previous round) == 0
-                                    sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(6*n+1)), stim.target_rec(-(6*n+2))]) 
+                            # Detector for A + E == 0
+                            sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-4)]) 
+                        elif op == 7:
+                            sec.append("MRX", [base + 0]) # D
+                        elif op == 8:
+                            sec.append("MRX", [base + 2]) # F
+
+                            if round_idx == 0:
+                                # Detect D + F + (corresponding stabilizer measurement) == 0
+                                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(5*j+n+6))]) 
+                            else:
+                                # Detect D + F + (same but previous round) == 0
+                                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(6*n+1)), stim.target_rec(-(6*n+2))]) 
         
         else:
             raise ValueError(f"Option {option} is not a valid choice!")
 
         # append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
-    
+
+    def new_sec(self, p_data, p1, p2, num_rounds=3) -> stim.Circuit:
+        sec = stim.Circuit()
+        stabilizers = self.get_stabilizers()
+        ANCILLA_PER_STAB = 3
+        n = self.get_n()
+        stabilizers_stim = stimify_symplectic(stabilizers)
+        all_logical_paulis = self.get_stim_logical_paulis()
+
+        # Do some perfect measurements before we get into actual extraction for detection purposes.
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        for stabilizer_stim in stabilizers_stim:
+            sec.append("MPP", stabilizer_stim)
+
+        # Implement depolarizing noise modeling errors on data qubits accrued while idling in memory (pre-syndrome extraction)
+        sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
+
+        for ancilla_block_qubit in range(n, (ANCILLA_PER_STAB+1)*n, ANCILLA_PER_STAB):
+            # Initialize first 3 qubits to |+>
+            sec.append("RX", [ancilla_block_qubit, ancilla_block_qubit + 1, ancilla_block_qubit + 2])
+
+
+        for round_idx in range(num_rounds):
+            # Do the syndrome extraction in parallel for each stabilizer
+            for j, stab in enumerate(stabilizers):
+                Z_part, X_part = stab[:n], stab[n:]
+
+                # X part first
+                X_supp = [i for i in range(n) if X_part[i] != 0]
+                Z_supp = [i for i in range(n) if Z_part[i] != 0]
+                for op in range(9):
+                    assert len(X_supp) == len(Z_supp) == 3
+                    base = n + j * ANCILLA_PER_STAB
+                    if op <= 2:
+                        # CNOT between X check and ancilla
+                        sec.append("CNOT", [base + op, X_supp[op]])
+                    elif op <= 5:
+                        if op == 3:
+                            sec.append("MPP", stim.PauliString(f"Z{base}*Z{base+1}")) # A
+                            sec.append("MPP", stim.PauliString(f"Z{base}*Z{base+2}")) # B
+                            sec.append("MPP", stim.PauliString(f"Z{base+1}*Z{base+2}")) # C
+                        # CZ between Z check and ancilla
+                        sec.append("CZ", [base + op - 3, Z_supp[op - 3]])
+                        if Z_supp[op - 3] in X_supp:
+                            sec.append("S", [base + op - 3])
+                        if op == 5:
+                            sec.append("CNOT", [base, base + 1])
+
+                            # Detector for A + B + C == 0
+                            sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-3)])
+                    elif op == 6:
+                        # Remaining measurements and detectors
+                        sec.append("MZ", [base + 1]) # E
+                        sec.append("RX", [base + 1]) # E reset
+
+                        # Detector for A + E == 0
+                        sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-4)]) 
+                    elif op == 7:
+                        sec.append("MRX", [base + 0]) # D
+                    elif op == 8:
+                        sec.append("MRX", [base + 2]) # F
+
+                        if round_idx == 0:
+                            # Detect D + F + (corresponding stabilizer measurement) == 0
+                            sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(5*j+n+6))]) 
+                        else:
+                            # Detect D + F + (same but previous round) == 0
+                            sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(6*n+1)), stim.target_rec(-(6*n+2))]) 
+        
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        return sec
+
+
     def bare_ancilla_sec(self, p_data, p1, p2, num_rounds=3) -> stim.Circuit:
         """
         Make a syndrome extraction circuit corresponding to the mirror code
@@ -817,7 +890,7 @@ class MirrorCode():
         """
         # assert self.wz == 3 and self.wx == 3, f"Idk how to make short circuits otherwise"
         assert 0 <= p1 <= 3/4, f"1-qubit error probability {p1} must be within [0, 3/4]"
-        assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
+        assert 0 <= p2 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
 
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         sec = stim.Circuit()
@@ -826,39 +899,194 @@ class MirrorCode():
         stabilizers_stim = stimify_symplectic(stabilizers)
         all_logical_paulis = self.get_stim_logical_paulis()
 
-        # Do some perfect measurements before we get into actual extraction for detection purposes.
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
-
 
         for stabilizer_stim in stabilizers_stim:
             sec.append("MPP", stabilizer_stim)
         sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
-
-
-        # Do some perfect measurements before we get into actual extraction for detection purposes.
-        
-        # Implement depolarizing noise modeling errors on data qubits accrued while idling in memory (pre-syndrome extraction)
         
         for _ in range(num_rounds):
             # Do the syndrome extraction in parallel for each stabilizer
             for j, stab in enumerate(stabilizers):
                 Z_part, X_part = stab[:n], stab[n:]
-                X_supp = [i for i in range(n) if X_part[i] != 0 and Z_part[i] == 0]
-                Z_supp = [i for i in range(n) if Z_part[i] != 0 and X_part[i] == 0]
-                Y_supp = [i for i in range(n) if Z_part[i] != 0 and X_part[i] != 0]
-                sec.append("RX", [n + j])
+                X_supp = [i for i in range(n) if X_part[i] != 0]
+                Z_supp = [i for i in range(n) if Z_part[i] != 0]
+                # Y_supp = [i for i in range(n) if Z_part[i] != 0 and X_part[i] != 0]
+                append_noisy_gate(sec, "RX", 1, [n+j], p1, after=True)
                 for q in X_supp:
-                    sec.append("CNOT", [n + j, q])
+                    append_noisy_gate(sec, "CNOT", 2, [n + j, q], p2)
                 for q in Z_supp:
-                    sec.append("CZ", [n + j, q])
-                for q in Y_supp:
-                    sec.append("CY", [n + j, q])
-                sec.append("MX", [n + j])
+                    append_noisy_gate(sec, "CZ", 2, [n + j, q], p2)
+                    if q in X_supp:
+                        append_noisy_gate(sec, "S", 1, [n+j], p1)
+                # for q in Y_supp:
+                #     append_noisy_gate(sec, "CY", 2, [n + j, q], p2)
+                append_noisy_gate(sec, "MX", 1, [n + j], p1)
                 sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-(n + 1))])
 
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
     
+    def casually_dressed_ancilla_sec(self, p_data, p1, p2, num_rounds=3) -> stim.Circuit:
+        sec = stim.Circuit()
+        stabilizers = self.get_stabilizers()
+        n = self.get_n()
+        stabilizers_stim = stimify_symplectic(stabilizers)
+        all_logical_paulis = self.get_stim_logical_paulis()
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+
+        for stabilizer_stim in stabilizers_stim:
+            sec.append("MPP", stabilizer_stim)
+        sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
+        
+        for round_idx in range(num_rounds):
+            # Do the syndrome extraction in parallel for each stabilizer
+            for j, stab in enumerate(stabilizers):
+                base = n + 2*j
+                Z_part, X_part = stab[:n], stab[n:]
+                X_supp = [i for i in range(n) if X_part[i] != 0]
+                Z_supp = [i for i in range(n) if Z_part[i] != 0]
+
+                append_noisy_gate(sec, "RX", 1, [base], p1, after=True)
+                append_noisy_gate(sec, "RZ", 1, [base + 1], p1, after=True)
+                append_noisy_gate(sec, "CNOT", 2, [base, base + 1], p2)
+
+                append_noisy_gate(sec, "CNOT", 2, [base, X_supp[0]], p2)
+                append_noisy_gate(sec, "CNOT", 2, [base, X_supp[1]], p2)
+                sec.append("MPP", stim.PauliString(f"Z{base}*Z{base+1}"))
+                sec.append("DETECTOR", targets=[stim.target_rec(-1)])
+
+                append_noisy_gate(sec, "CNOT", 2, [base, X_supp[2]], p2)
+                append_noisy_gate(sec, "CZ", 2, [base, Z_supp[0]], p2)
+
+                sec.append("MPP", stim.PauliString(f"Z{base}*Z{base+1}"))
+                sec.append("DETECTOR", targets=[stim.target_rec(-1)])
+
+                append_noisy_gate(sec, "CZ", 2, [base, Z_supp[1]], p2)
+                append_noisy_gate(sec, "CZ", 2, [base, Z_supp[2]], p2)
+                for q in Z_supp:
+                    if q in X_supp:
+                        append_noisy_gate(sec, "S", 1, [base+1], p1)
+
+                append_noisy_gate(sec, "CNOT", 2, [base, base + 1], p2)
+                append_noisy_gate(sec, "MRX", 1, [base], p1)
+                append_noisy_gate(sec, "MRZ", 1, [base + 1], p1)
+                sec.append("DETECTOR", targets=[stim.target_rec(-1)])
+                if round_idx == 0:
+                    sec.append("DETECTOR", targets=[stim.target_rec(-2), stim.target_rec(-(n + 3*j + 4))])
+                else:
+                    sec.append("DETECTOR", targets=[stim.target_rec(-2), stim.target_rec(-(4*n + 2))])
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        return sec
+    
+    def smart_casual_ancilla_sec(self, p_data, p1, p2, num_rounds=3) -> stim.Circuit:
+        sec = stim.Circuit()
+        stabilizers = self.get_stabilizers()
+        n = self.get_n()
+        stabilizers_stim = stimify_symplectic(stabilizers)
+        all_logical_paulis = self.get_stim_logical_paulis()
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+
+        for stabilizer_stim in stabilizers_stim:
+            sec.append("MPP", stabilizer_stim)
+        sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
+        
+        for round_idx in range(num_rounds):
+            # Do the syndrome extraction in parallel for each stabilizer
+            for j, stab in enumerate(stabilizers):
+                base = n + 4*j
+                Z_part, X_part = stab[:n], stab[n:]
+                X_supp = [i for i in range(n) if X_part[i] != 0]
+                Z_supp = [i for i in range(n) if Z_part[i] != 0]
+
+                append_noisy_gate(sec, "RX", 1, [base], p1, after=True)
+                append_noisy_gate(sec, "RZ", 1, [base + 1, base + 2, base + 3], p1, after=True)
+                append_noisy_gate(sec, "CNOT", 2, [base, base + 1], p2)
+
+                append_noisy_gate(sec, "CNOT", 2, [base, X_supp[0]], p2)
+                append_noisy_gate(sec, "CNOT", 2, [base, X_supp[1]], p2)
+
+                append_noisy_gate(sec, "CNOT", 2, [base, base+2], p2)
+                append_noisy_gate(sec, "CNOT", 2, [base+1, base+2], p2)
+                append_noisy_gate(sec, "MRZ", 1, [base + 2], p1)
+                
+                sec.append("DETECTOR", targets=[stim.target_rec(-1)])
+
+                append_noisy_gate(sec, "CNOT", 2, [base, X_supp[2]], p2)
+                append_noisy_gate(sec, "CZ", 2, [base, Z_supp[0]], p2)
+
+                append_noisy_gate(sec, "CNOT", 2, [base, base+3], p2)
+                append_noisy_gate(sec, "CNOT", 2, [base+1, base+3], p2)
+                append_noisy_gate(sec, "MRZ", 1, [base + 3], p1)
+                sec.append("DETECTOR", targets=[stim.target_rec(-1)])
+
+                append_noisy_gate(sec, "CZ", 2, [base, Z_supp[1]], p2)
+                append_noisy_gate(sec, "CZ", 2, [base, Z_supp[2]], p2)
+                for q in Z_supp:
+                    if q in X_supp:
+                        append_noisy_gate(sec, "S", 1, [base+1], p1)
+
+                append_noisy_gate(sec, "CNOT", 2, [base, base + 1], p2)
+                append_noisy_gate(sec, "MRX", 1, [base], p1)
+                append_noisy_gate(sec, "MRZ", 1, [base + 1], p1)
+                sec.append("DETECTOR", targets=[stim.target_rec(-1)])
+                if round_idx == 0:
+                    sec.append("DETECTOR", targets=[stim.target_rec(-2), stim.target_rec(-(n + 3*j + 4))])
+                else:
+                    sec.append("DETECTOR", targets=[stim.target_rec(-2), stim.target_rec(-(4*n + 2))])
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        return sec
+    
+
+    def barely_dressed_ancilla_sec(self, p_data, p1, p2, num_rounds=3) -> stim.Circuit:
+        sec = stim.Circuit()
+        stabilizers = self.get_stabilizers()
+        n = self.get_n()
+        stabilizers_stim = stimify_symplectic(stabilizers)
+        all_logical_paulis = self.get_stim_logical_paulis()
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+
+        for stabilizer_stim in stabilizers_stim:
+            sec.append("MPP", stabilizer_stim)
+        sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
+        
+        for round_idx in range(num_rounds):
+            # Do the syndrome extraction in parallel for each stabilizer
+            for j, stab in enumerate(stabilizers):
+                base = n + 2*j
+                Z_part, X_part = stab[:n], stab[n:]
+                X_supp = [i for i in range(n) if X_part[i] != 0]
+                Z_supp = [i for i in range(n) if Z_part[i] != 0]
+
+                append_noisy_gate(sec, "RX", 1, [base], p1, after=True)
+                append_noisy_gate(sec, "RZ", 1, [base + 1], p1, after=True)
+                append_noisy_gate(sec, "CNOT", 2, [base, base + 1], p2)
+
+                for q in X_supp:
+                    append_noisy_gate(sec, "CNOT", 2, [base, q], p2)
+                for q in Z_supp:
+                    append_noisy_gate(sec, "CZ", 2, [base, q], p2)
+                    if q in X_supp:
+                        # raise LookupError("You found me :)")
+                        append_noisy_gate(sec, "S", 1, [base+1], p1)
+
+                append_noisy_gate(sec, "CNOT", 2, [base, base + 1], p2)
+                append_noisy_gate(sec, "MRX", 1, [base], p1)
+                append_noisy_gate(sec, "MRZ", 1, [base + 1], p1)
+                sec.append("DETECTOR", targets=[stim.target_rec(-1)])
+                if round_idx == 0:
+                    sec.append("DETECTOR", targets=[stim.target_rec(-2), stim.target_rec(-(n + j + 2))])
+                else:
+                    sec.append("DETECTOR", targets=[stim.target_rec(-2), stim.target_rec(-(2*n + 2))])
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        return sec
+
     def generic_sec(self, p_data, p1, p2, num_rounds):
         """
         A generic "fake"/unphysical syndrome extraction circuit which should work for any stabilizer tableau.
@@ -906,7 +1134,10 @@ class MirrorCode():
         assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
 
         print("Making the syndrome extraction circuit...")
-        sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=1)
+        # sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=1)
+        # sec = self.new_sec(p_data, p1, p2, num_rounds)
+        sec = self.smart_casual_ancilla_sec(p_data, p1, p2, num_rounds)
+        # sec = self.barely_dressed_ancilla_sec(p_data, p1, p2, num_rounds)
         # sec = self.bare_ancilla_sec(p_data, p1, p2, num_rounds)
         print("Done.")
         
@@ -919,27 +1150,27 @@ class MirrorCode():
         dets, obs = sampler.sample(num_shots, separate_observables=True)
         print("Done.")
 
-        # print("Setting up Tesseract config...")
-        # tesseract_config = tesseract.TesseractConfig(
-        #     dem=dem,
-        #     pqlimit=10000,
-        #     no_revisit_dets=True,
-        #     # verbose=True,
-        #     det_orders=tesseract_decoder.utils.build_det_orders(
-        #         dem, num_det_orders=1,
-        #         method=tesseract_decoder.utils.DetOrder.DetIndex,
-        #         seed=2384753),
-        # )
-        # print("Done.")
+        print("Setting up Tesseract config...")
+        tesseract_config = tesseract.TesseractConfig(
+            dem=dem,
+            pqlimit=10000,
+            no_revisit_dets=True,
+            # verbose=True,
+            det_orders=tesseract_decoder.utils.build_det_orders(
+                dem, num_det_orders=1,
+                method=tesseract_decoder.utils.DetOrder.DetIndex,
+                seed=2384753),
+        )
+        print("Done.")
         # print(f'Tesseract decoder configurations --> {tesseract_config}\n')
         
-        # print("Running Tesseract decoder...")
-        # sampler = sec.compile_detector_sampler()
-        # dets, obs = sampler.sample(num_shots, separate_observables=True)
-        # tesseract_dec = tesseract_config.compile_decoder()
-        # results = run_tesseract_decoder(tesseract_dec, dets, obs)
-        # print("Done.")
-        # print_decoder_results(results)
+        print("Running Tesseract decoder...")
+        sampler = sec.compile_detector_sampler()
+        dets, obs = sampler.sample(num_shots, separate_observables=True)
+        tesseract_dec = tesseract_config.compile_decoder()
+        results = run_tesseract_decoder(tesseract_dec, dets, obs)
+        print("Done.")
+        print_decoder_results(results)
 
         return
 
@@ -961,35 +1192,35 @@ if __name__ == "__main__":
     # for stab in CSS_stabs[0]:
     #     print(symp2Pauli(stab, n))
 
-    # code = MirrorCode(
-    #     group = [2, 2, 3, 3],
-    #     z0 = [[0, 0, 0, 0],
-    #    [0, 1, 0, 1],
-    #    [1, 0, 0, 2]],
-    #     x0 = [[0, 0, 0, 0],
-    #    [0, 1, 1, 0],
-    #    [1, 1, 2, 0]]
-    # )
     code = MirrorCode(
-        group = [2, 3, 5],
-        z0 = [[0, 0, 0],
-       [0, 0, 1],
-       [0, 1, 3]],
-        x0 = [[1, 0, 0],
-       [1, 0, 2],
-       [1, 1, 1]],
-       is_css = False
+        group = [2, 2, 3, 3],
+        z0 = [[0, 0, 0, 0],
+       [0, 1, 0, 1],
+       [1, 0, 0, 2]],
+        x0 = [[0, 0, 0, 0],
+       [0, 1, 1, 0],
+       [1, 1, 2, 0]]
     )
+    # code = MirrorCode(
+    #     group = [2, 3, 5],
+    #     z0 = [[0, 0, 0],
+    #    [0, 0, 1],
+    #    [0, 1, 3]],
+    #     x0 = [[1, 0, 0],
+    #    [1, 0, 2],
+    #    [1, 1, 1]],
+    #    is_css = False
+    # )
 
     # code = MirrorCode([3, 3], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
     # code = MirrorCode([2, 2], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
 
 
     code.benchmark(
-        p_data = 0.2,
-        p1 = 0.1,
-        p2 = 0.2,
-        num_rounds = 1,
+        p_data = 0.04,
+        p1 = 0.0001,
+        p2 = 0.002,
+        num_rounds = 6,
         num_shots = 1000
     )
 
