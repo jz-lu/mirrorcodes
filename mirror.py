@@ -18,8 +18,8 @@ from util import binary_rank, symp2Pauli, stimify_symplectic
 from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
-import tesseract_decoder
-import tesseract_decoder.tesseract as tesseract
+#import tesseract_decoder
+#import tesseract_decoder.tesseract as tesseract
 import time
 
 """
@@ -414,10 +414,10 @@ def find_stabilizers(group, z0, x0):
         stabilizers[i, np.mod(z0 + g, group) @ strides] = 1
         stabilizers[i, np.mod(x0 - g, group) @ strides + n] = 1
 
-    if can_flip:
-        for g in flips:
-            index = g @ strides
-            stabilizers[:, [index, index + n]] = stabilizers[:, [index + n, index]]
+    # if can_flip:
+    #     for g in flips:
+    #         index = g @ strides
+    #         stabilizers[:, [index, index + n]] = stabilizers[:, [index + n, index]]
     return stabilizers, can_flip
 
 
@@ -642,7 +642,7 @@ class MirrorCode():
 
         # Implement depolarizing noise modeling errors on data qubits accrued while idling in memory (pre-syndrome extraction)
         sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
-
+        
         if option == 0:
             # Initialize ancillary system
             for ancilla_block_qubit in range(n, (ANCILLA_PER_STAB+1)*n, ANCILLA_PER_STAB):
@@ -728,63 +728,64 @@ class MirrorCode():
             for round_idx in range(num_rounds):
                 # Do the syndrome extraction in parallel for each stabilizer
                 for j, stab in enumerate(stabilizers):
-                    for op in range(9):
-                        Z_part, X_part = stab[:n], stab[n:]
+                    Z_part, X_part = stab[:n], stab[n:]
 
-                        # X part first
-                        X_supp = [i for i in range(n) if X_part[i] != 0]
-                        Z_supp = [i for i in range(n) if Z_part[i] != 0]
-                        # assert len(X_supp) == len(Z_supp) == 3
+                    # X part first
+                    X_supp = [i for i in range(n) if X_part[i] != 0]
+                    Z_supp = [i for i in range(n) if Z_part[i] != 0]
+                    for op in range(9):
+                        assert len(X_supp) == len(Z_supp) == 3
+                        base = n + j * ANCILLA_PER_STAB
                         if op <= 2:
                             # CNOT between X check and ancilla
-                            sec.append("CNOT", [(j+1)*n + op, X_supp[op]])
+                            sec.append("CNOT", [base + op, X_supp[op]])
                             if op == 1:
                                 # Do a CNOT between ancillas 0 and 3
-                                sec.append("CNOT", [(j+1)*n, (j+1)*n + 3])
+                                sec.append("CNOT", [base, base + 3])
                             elif op == 2:
                                 # Do a CNOT between ancillas 1 and 4
-                                sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 3])
-                                sec.append("CNOT", [(j+1)*n, (j+1)*n + 4])
+                                sec.append("CNOT", [base + 1, base + 3])
+                                sec.append("CNOT", [base, base + 4])
                         elif op <= 5:
-                            # CZ between Z check and anncilla
+                            # CZ between Z check and ancilla
+                            sec.append("CZ", [base + op - 3, Z_supp[op - 3]])
+                            if Z_supp[op - 3] in X_supp:
+                                sec.append("S", [base + op - 3])
                             if op == 3:
                                 # Also add 2 CNOT gates between the ancillas
-                                sec.append("CZ", [Z_supp[0], (j+1)*n])
-                                sec.append("CNOT", [(j+1)*n + 2, (j+1)*n + 4])
-                                sec.append("CNOT", [(j+1)*n + 1, (j+1)*n + 5])
+                                sec.append("CNOT", [base + 2, base + 4])
+                                sec.append("CNOT", [base + 1, base + 5])
                                 # Add measurement of ancilla 3
-                                sec.append("MRZ", [(j+1)*n + 3]) # A
+                                sec.append("MRZ", [base + 3]) # A
                             elif op == 4:
                                 # Add some CNOTs and measurements
-                                sec.append("CZ", [Z_supp[1], (j+1)*n + 1])
-                                sec.append("CNOT", [(j+1)*n + 2, (j+1)*n + 5])
-                                sec.append("MRZ", [(j+1)*n + 4]) # B
+                                sec.append("CNOT", [base + 2, base + 5])
+                                sec.append("MRZ", [base + 4]) # B
                             elif op == 5:
-                                sec.append("CZ", [Z_supp[2], (j+1)*n + 2])
-                                sec.append("CNOT", [(j+1)*n, (j+1)*n + 1])
-                                sec.append("MRZ", [(j+1)*n + 5]) # C
+                                sec.append("CNOT", [base, base + 1])
+                                sec.append("MRZ", [base + 5]) # C
 
                                 # Detector for A + B + C == 0
                                 sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-3)])
                             elif op == 6:
                                 # Remaining measurements and detectors
-                                sec.append("MZ", [(j+1)*n + 1]) # E
-                                sec.append("RX", [(j+1)*n + 1]) # E reset
+                                sec.append("MZ", [base + 1]) # E
+                                sec.append("RX", [base + 1]) # E reset
 
                                 # Detector for A + E == 0
                                 sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-4)]) 
                             elif op == 7:
-                                sec.append("MRX", [(j+1)*n + 0]) # D
+                                sec.append("MRX", [base + 0]) # D
                             elif op == 8:
-                                sec.append("MRX", [(j+1)*n + 2]) # F
+                                sec.append("MRX", [base + 2]) # F
 
                                 if round_idx == 0:
                                     # Detect D + F + (corresponding stabilizer measurement) == 0
-                                    sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(5*j+n+1))]) 
+                                    sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(5*j+n+6))]) 
                                 else:
                                     # Detect D + F + (same but previous round) == 0
                                     sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2), stim.target_rec(-(6*n+1)), stim.target_rec(-(6*n+2))]) 
-
+        
         else:
             raise ValueError(f"Option {option} is not a valid choice!")
 
@@ -825,8 +826,9 @@ class MirrorCode():
         stabilizers_stim = stimify_symplectic(stabilizers)
         all_logical_paulis = self.get_stim_logical_paulis()
 
+        # Do some perfect measurements before we get into actual extraction for detection purposes.
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
-        print(all_logical_paulis)
+
 
         for stabilizer_stim in stabilizers_stim:
             sec.append("MPP", stabilizer_stim)
@@ -841,24 +843,19 @@ class MirrorCode():
             # Do the syndrome extraction in parallel for each stabilizer
             for j, stab in enumerate(stabilizers):
                 Z_part, X_part = stab[:n], stab[n:]
-                X_supp = [i for i in range(n) if X_part[i] != 0]
-                Z_supp = [i for i in range(n) if Z_part[i] != 0]
-                for op in range(len(X_supp) + len(Z_supp) + 1):
-                    if op == 0:
-                        sec.append("MX", [n + j])
-                        sec.append("DETECTOR", targets=[stim.target_rec(-1)])
-                    # X part first
-                    #assert len(X_supp) == len(Z_supp) == 3
-                    if op < len(X_supp):
-                        # CNOT between X check and ancilla
-                        sec.append("CNOT", [n + j, X_supp[op]])
-                    elif op < len(X_supp) + len(Z_supp):
-                        # CZ between Z check and ancilla
-                        sec.append("CZ", [n + j, Z_supp[op - len(X_supp)]])
-                    else:
-                        sec.append("MX", [n + j])
-                        sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-(n+j+2))])
-        
+                X_supp = [i for i in range(n) if X_part[i] != 0 and Z_part[i] == 0]
+                Z_supp = [i for i in range(n) if Z_part[i] != 0 and X_part[i] == 0]
+                Y_supp = [i for i in range(n) if Z_part[i] != 0 and X_part[i] != 0]
+                sec.append("RX", [n + j])
+                for q in X_supp:
+                    sec.append("CNOT", [n + j, q])
+                for q in Z_supp:
+                    sec.append("CZ", [n + j, q])
+                for q in Y_supp:
+                    sec.append("CY", [n + j, q])
+                sec.append("MX", [n + j])
+                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-(n + 1))])
+
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
     
@@ -922,27 +919,27 @@ class MirrorCode():
         dets, obs = sampler.sample(num_shots, separate_observables=True)
         print("Done.")
 
-        print("Setting up Tesseract config...")
-        tesseract_config = tesseract.TesseractConfig(
-            dem=dem,
-            pqlimit=10000,
-            no_revisit_dets=True,
-            # verbose=True,
-            det_orders=tesseract_decoder.utils.build_det_orders(
-                dem, num_det_orders=1,
-                method=tesseract_decoder.utils.DetOrder.DetIndex,
-                seed=2384753),
-        )
-        print("Done.")
-        print(f'Tesseract decoder configurations --> {tesseract_config}\n')
+        # print("Setting up Tesseract config...")
+        # tesseract_config = tesseract.TesseractConfig(
+        #     dem=dem,
+        #     pqlimit=10000,
+        #     no_revisit_dets=True,
+        #     # verbose=True,
+        #     det_orders=tesseract_decoder.utils.build_det_orders(
+        #         dem, num_det_orders=1,
+        #         method=tesseract_decoder.utils.DetOrder.DetIndex,
+        #         seed=2384753),
+        # )
+        # print("Done.")
+        # print(f'Tesseract decoder configurations --> {tesseract_config}\n')
         
-        print("Running Tesseract decoder...")
-        sampler = sec.compile_detector_sampler()
-        dets, obs = sampler.sample(num_shots, separate_observables=True)
-        tesseract_dec = tesseract_config.compile_decoder()
-        results = run_tesseract_decoder(tesseract_dec, dets, obs)
-        print("Done.")
-        print_decoder_results(results)
+        # print("Running Tesseract decoder...")
+        # sampler = sec.compile_detector_sampler()
+        # dets, obs = sampler.sample(num_shots, separate_observables=True)
+        # tesseract_dec = tesseract_config.compile_decoder()
+        # results = run_tesseract_decoder(tesseract_dec, dets, obs)
+        # print("Done.")
+        # print_decoder_results(results)
 
         return
 
@@ -973,13 +970,21 @@ if __name__ == "__main__":
     #    [0, 1, 1, 0],
     #    [1, 1, 2, 0]]
     # )
+    code = MirrorCode(
+        group = [2, 3, 5],
+        z0 = [[0, 0, 0],
+       [0, 0, 1],
+       [0, 1, 3]],
+        x0 = [[1, 0, 0],
+       [1, 0, 2],
+       [1, 1, 1]],
+       is_css = False
+    )
 
-    code = MirrorCode([3, 3], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
+    # code = MirrorCode([3, 3], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
     # code = MirrorCode([2, 2], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
 
 
-    print(code.get_stim_tableau())
-    print(code.get_stim_logical_paulis())
     code.benchmark(
         p_data = 0.2,
         p1 = 0.1,
@@ -987,5 +992,6 @@ if __name__ == "__main__":
         num_rounds = 1,
         num_shots = 1000
     )
+
 
     # Make some non-CSS codes and check if they are CSS
