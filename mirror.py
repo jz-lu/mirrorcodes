@@ -560,7 +560,7 @@ class MirrorCode():
         z, x = make_code(self.get_stim_tableau())[1:]
         self.stim_logical_paulis = [z, x]
         return z + x
-
+    
     def get_n(self):
         if self.n is None:
             self.n = int(np.prod(self.group))
@@ -621,7 +621,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
-        assert self.wz == 3 and self.wx == 3, f"Idk how to make short circuits otherwise"
+        # assert self.wz == 3 and self.wx == 3, f"Idk how to make short circuits otherwise"
         assert 0 <= p1 <= 3/4, f"1-qubit error probability {p1} must be within [0, 3/4]"
         assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
 
@@ -634,10 +634,9 @@ class MirrorCode():
         n = self.get_n()
         stabilizers_stim = stimify_symplectic(stabilizers)
         all_logical_paulis = self.get_stim_logical_paulis()
-        print(all_logical_paulis)
 
         # Do some perfect measurements before we get into actual extraction for detection purposes.
-        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        # append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         for stabilizer_stim in stabilizers_stim:
             sec.append("MPP", stabilizer_stim)
 
@@ -735,7 +734,7 @@ class MirrorCode():
                         # X part first
                         X_supp = [i for i in range(n) if X_part[i] != 0]
                         Z_supp = [i for i in range(n) if Z_part[i] != 0]
-                        assert len(X_supp) == len(Z_supp) == 3
+                        # assert len(X_supp) == len(Z_supp) == 3
                         if op <= 2:
                             # CNOT between X check and ancilla
                             sec.append("CNOT", [(j+1)*n + op, X_supp[op]])
@@ -789,7 +788,7 @@ class MirrorCode():
         else:
             raise ValueError(f"Option {option} is not a valid choice!")
 
-        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        # append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
     
     def bare_ancilla_sec(self, p_data, p1, p2, num_rounds=3) -> stim.Circuit:
@@ -826,17 +825,18 @@ class MirrorCode():
         stabilizers_stim = stimify_symplectic(stabilizers)
         all_logical_paulis = self.get_stim_logical_paulis()
 
-        for ancilla_block_qubit in range(n, 2*n):
-            sec.append("RX", [ancilla_block_qubit])
-
-        # Do some perfect measurements before we get into actual extraction for detection purposes.
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        print(all_logical_paulis)
 
         for stabilizer_stim in stabilizers_stim:
             sec.append("MPP", stabilizer_stim)
-        # Implement depolarizing noise modeling errors on data qubits accrued while idling in memory (pre-syndrome extraction)
         sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
 
+
+        # Do some perfect measurements before we get into actual extraction for detection purposes.
+        
+        # Implement depolarizing noise modeling errors on data qubits accrued while idling in memory (pre-syndrome extraction)
+        
         for _ in range(num_rounds):
             # Do the syndrome extraction in parallel for each stabilizer
             for j, stab in enumerate(stabilizers):
@@ -844,7 +844,9 @@ class MirrorCode():
                 X_supp = [i for i in range(n) if X_part[i] != 0]
                 Z_supp = [i for i in range(n) if Z_part[i] != 0]
                 for op in range(len(X_supp) + len(Z_supp) + 1):
-
+                    if op == 0:
+                        sec.append("MX", [n + j])
+                        sec.append("DETECTOR", targets=[stim.target_rec(-1)])
                     # X part first
                     #assert len(X_supp) == len(Z_supp) == 3
                     if op < len(X_supp):
@@ -855,10 +857,8 @@ class MirrorCode():
                         sec.append("CZ", [n + j, Z_supp[op - len(X_supp)]])
                     else:
                         sec.append("MX", [n + j])
+                        sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-(n+j+2))])
         
-        for i in range(num_rounds):
-            sec.append("DETECTOR", targets=[stim.target_rec(-(1 + i*n)), stim.target_rec(-(1 + (i+1)*n))])
-
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
     
@@ -872,8 +872,7 @@ class MirrorCode():
 
         circuit = stim.Circuit()
 
-        append_observable_includes_for_paulis(
-            circuit=circuit, paulis=all_logicals_paulis)
+        append_observable_includes_for_paulis(circuit=circuit, paulis=all_logicals_paulis)
         circuit.append("MPP", stabilizer_paulis)
         circuit.append("DEPOLARIZE1", targets=list(range(num_qubits)), arg=p_data)
 
@@ -910,8 +909,8 @@ class MirrorCode():
         assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
 
         print("Making the syndrome extraction circuit...")
-        # sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=1)
-        sec = self.bare_ancilla_sec(p_data, p1, p2, num_rounds)
+        sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=1)
+        # sec = self.bare_ancilla_sec(p_data, p1, p2, num_rounds)
         print("Done.")
         
         print("Creating detector error model...")
