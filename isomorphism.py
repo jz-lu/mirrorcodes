@@ -95,6 +95,18 @@ def lex_minimal_vectors(p, lambdas):
     0 <= x_i < p^{λ_i}, *under the full automorphism group* Aut(G).
     """
     lambdas_t = tuple(int(l) for l in lambdas)
+
+    # Special case: G = (Z/2Z)^6
+    # Aut(G) = GL(6,2) acts transitively on non-zero vectors.
+    # So there are exactly two orbits: {0} and all non-zero vectors.
+    # Lex order is induced by strides, so the minimal non-zero
+    # vector is [0,0,0,0,0,1] (index 1).
+    if p == 2 and len(lambdas_t) == 6 and all(l == 1 for l in lambdas_t):
+        return [
+            [0, 0, 0, 0, 0, 0],  # zero vector
+            [0, 0, 0, 0, 0, 1],  # lexicographically minimal non-zero vector
+        ]
+
     reps = _lex_minimal_vectors_cached(p, lambdas_t)
     return [list(v) for v in reps]
 

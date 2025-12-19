@@ -223,6 +223,9 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float):
 
     total = Z_wt + X_wt
 
+    # Special-case flag for G = (Z/2Z)^6
+    is_f2_6 = (p == 2 and r == 6 and all(l == 1 for l in lambdas))
+
     try:
         while True:
             # Global time limit check
@@ -270,42 +273,122 @@ def minimal_strings_for_subgroup(Z_wt, X_wt, subgroup, start_time: float):
                             else:
                                 new_layer.append(v_vec)
                 else:
-                    # Nontrivial constraints: use automorphisms_fixing_vectors with Z_wt
-                    isos, shifts = automorphisms_fixing_vectors(p, lambdas, Z_wt, fixed)
-                    if isos.size != 0:
-                        num_isos = isos.shape[0]
+                    # Nontrivial constraints:
+                    # Generic case uses automorphisms_fixing_vectors.
+                    # For G = (Z/2Z)^6 we instead use an orbit description
+                    # via the subspace W spanned by Z rows and X-differences
+                    # (no automorphism enumeration).
+                    if is_f2_6:
+                        # fixed is a tuple of length depth, each a length-6 vector
+                        fixed_np = np.array(fixed, dtype=np.int8) & 1
+                        t = fixed_np.shape[0]
+                        z_count = min(t, Z_wt)
+
+                        # Generators for W:
+                        gens = []
+                        for j in range(z_count):
+                            row = fixed_np[j]
+                            if np.any(row):
+                                gens.append(row.copy())
+
+                        baseX = None
+                        base_val = None
+                        if t > Z_wt:
+                            baseX = fixed_np[Z_wt].copy()
+                            base_val = int((baseX % 2) @ strides)
+                            for k in range(Z_wt + 1, t):
+                                dv = (fixed_np[k] - baseX) & 1
+                                if np.any(dv):
+                                    gens.append(dv)
+
+                        # Build W as a set of 6-bit integers using XOR closure
+                        W_set = {0}
+                        for g in gens:
+                            gv = int((g % 2) @ strides)
+                            if gv == 0:
+                                continue
+                            # For each existing w in W, w and w ^ gv are in W
+                            new_vals = {w ^ gv for w in W_set}
+                            W_set |= new_vals
+
+                        # For Z-region we need m_W = min element not in W
+                        # For X-region we need m_C = min element not in coset baseX + W
+                        if depth < Z_wt or baseX is None:
+                            coset = None
+                            m_val = None
+                            for v_int in range(1 << 6):  # 0..63
+                                if v_int not in W_set:
+                                    m_val = v_int
+                                    break
+                        else:
+                            coset = {base_val ^ w for w in W_set}
+                            m_val = None
+                            for v_int in range(1 << 6):
+                                if v_int not in coset:
+                                    m_val = v_int
+                                    break
+
+                        # Now filter all group elements according to orbit minima
                         for v_vec in elems:
                             if _elapsed(start_time) > TIME_LIMIT_SECONDS:
                                 raise TimeLimitExceeded(
                                     "Time limit reached during minimal_strings_for_subgroup "
-                                    "(element loop)."
+                                    "(F2^6 element loop)."
                                 )
 
                             if depth == Z_wt and v_vec.max() > (1 if p == 2 else 0):
                                 if p > 2:
                                     break
 
-                            base_index = int(v_vec @ strides)
-                            min_index = base_index
+                            v_val = int(((v_vec % 2) @ strides))
 
-                            if depth < Z_wt:
-                                # Z-region: no shift in the comparison
-                                for idx in range(num_isos):
-                                    img = (isos[idx] @ v_vec) % subgroup_np
-                                    idx_val = int(img @ strides)
-                                    if idx_val < min_index:
-                                        min_index = idx_val
+                            if depth < Z_wt or baseX is None:
+                                # Z-region: orbits are {w} for w∈W, and a single
+                                # orbit G \ W with minimal element m_val.
+                                if v_val in W_set or v_val == m_val:
+                                    new_layer.append(v_vec)
                             else:
-                                # X-region: apply automorphism then subtract shift
-                                for idx in range(num_isos):
-                                    img = (isos[idx] @ v_vec) % subgroup_np
-                                    img_shifted = (img - shifts[idx]) % subgroup_np
-                                    idx_val = int(img_shifted @ strides)
-                                    if idx_val < min_index:
-                                        min_index = idx_val
+                                # X-region: orbits are {v} for v in baseX+W, and
+                                # a single orbit G \ (baseX+W) with minimal m_val.
+                                if v_val in coset or v_val == m_val:
+                                    new_layer.append(v_vec)
+                    else:
+                        # Generic branch: use automorphisms_fixing_vectors with Z_wt
+                        isos, shifts = automorphisms_fixing_vectors(p, lambdas, Z_wt, fixed)
+                        if isos.size != 0:
+                            num_isos = isos.shape[0]
+                            for v_vec in elems:
+                                if _elapsed(start_time) > TIME_LIMIT_SECONDS:
+                                    raise TimeLimitExceeded(
+                                        "Time limit reached during minimal_strings_for_subgroup "
+                                        "(element loop)."
+                                    )
 
-                            if base_index <= min_index:
-                                new_layer.append(v_vec)
+                                if depth == Z_wt and v_vec.max() > (1 if p == 2 else 0):
+                                    if p > 2:
+                                        break
+
+                                base_index = int(v_vec @ strides)
+                                min_index = base_index
+
+                                if depth < Z_wt:
+                                    # Z-region: no shift in the comparison
+                                    for idx in range(num_isos):
+                                        img = (isos[idx] @ v_vec) % subgroup_np
+                                        idx_val = int(img @ strides)
+                                        if idx_val < min_index:
+                                            min_index = idx_val
+                                else:
+                                    # X-region: apply automorphism then subtract shift
+                                    for idx in range(num_isos):
+                                        img = (isos[idx] @ v_vec) % subgroup_np
+                                        img_shifted = (img - shifts[idx]) % subgroup_np
+                                        idx_val = int(img_shifted @ strides)
+                                        if idx_val < min_index:
+                                            min_index = idx_val
+
+                                if base_index <= min_index:
+                                    new_layer.append(v_vec)
 
                 if not new_layer:
                     # No possible extension for this prefix: move on at this depth
@@ -802,8 +885,7 @@ def find_all_codes_in_group(
 
     try:
         while stack:
-            # Group-level time check; any timeout here is handled
-            # by the outer except block which snapshots the DFS state.
+            # Group-level time check and snapshot
             if _elapsed(start_time) > TIME_LIMIT_SECONDS:
                 raise TimeLimitExceeded(
                     "Time limit reached during find_all_codes_in_group; "
@@ -1050,8 +1132,9 @@ def find_all_codes(n, Z_wt, X_wt, min_k=3):
 # ============================================================
 
 def main():
+    # Example tiny test:
     print(len(find_all_codes(24, 3, 3)))
-
+    
 
 if __name__ == "__main__":
     main()
