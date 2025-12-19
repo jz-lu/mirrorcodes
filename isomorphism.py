@@ -1,6 +1,6 @@
 from functools import lru_cache
 import numpy as np
-from itertools import product, combinations
+from itertools import product, combinations, permutations
 from util import find_strides  # if not already imported
 
 
@@ -92,21 +92,32 @@ def lex_minimal_vectors(p, lambdas):
 
     with λ_i in `lambdas` (non-decreasing), return all lexicographically minimal
     vectors (one per Aut(G)-orbit) as tuples (x_1, ..., x_r) with
-    0 <= x_i < p^{λ_i}, *under the full automorphism group* Aut(G).
+    0 <= x_i < p^{λ_i}.
+
+    SPECIAL CASE: for G = (Z/2Z)^6 (i.e. p=2 and lambdas=(1,1,1,1,1,1)),
+    we restrict to automorphisms given by coordinate permutations (S_6).
+    Under S_6, the orbits of vectors are classified by Hamming weight, so
+    there is exactly one representative per weight: the vector
+
+        [0, ..., 0, 1, ..., 1]
+
+    with w ones at the end for each w = 0..6.
     """
     lambdas_t = tuple(int(l) for l in lambdas)
 
-    # Special case: G = (Z/2Z)^6
-    # Aut(G) = GL(6,2) acts transitively on non-zero vectors.
-    # So there are exactly two orbits: {0} and all non-zero vectors.
-    # Lex order is induced by strides, so the minimal non-zero
-    # vector is [0,0,0,0,0,1] (index 1).
-    if p == 2 and len(lambdas_t) == 6 and all(l == 1 for l in lambdas_t):
-        return [
-            [0, 0, 0, 0, 0, 0],  # zero vector
-            [0, 0, 0, 0, 0, 1],  # lexicographically minimal non-zero vector
-        ]
+    # Special-case: (Z/2Z)^6, automorphisms = coordinate permutations.
+    if p == 2 and lambdas_t == (1, 1, 1, 1, 1, 1):
+        r = len(lambdas_t)
+        reps = []
+        for w in range(r + 1):
+            vec = [0] * r
+            # put w ones at the end
+            for i in range(r - w, r):
+                vec[i] = 1
+            reps.append(vec)
+        return reps
 
+    # Generic case: use cached canonical reps under the full Aut(G) machinery.
     reps = _lex_minimal_vectors_cached(p, lambdas_t)
     return [list(v) for v in reps]
 
@@ -141,13 +152,56 @@ def _canonical_rep_and_auto(p, lambdas, v):
         A : automorphism matrix (list of rows) with A * v = w
 
     This uses the full automorphism group as implemented by
-    _automorphism_sending_vector.
+    _automorphism_sending_vector, except in the special (Z/2Z)^6 case
+    where we use coordinate permutations only.
     """
     lambdas = tuple(lambdas)
     v = tuple(v)
     r = len(lambdas)
     moduli = [p ** lam for lam in lambdas]
 
+    # Special-case: (Z/2Z)^6 with automorphisms = permutations of coordinates.
+    if p == 2 and lambdas == (1, 1, 1, 1, 1, 1):
+        # Normalize v mod 2
+        v_arr = np.array(v, dtype=int) % 2
+        if np.all(v_arr == 0):
+            A = np.eye(6, dtype=int).tolist()
+            return tuple(v_arr.tolist()), A
+
+        # Hamming weight
+        w = int(v_arr.sum())
+        # Target canonical rep: [0,...,0,1,...,1] with w ones at the end
+        rdim = 6
+        target = np.zeros(rdim, dtype=int)
+        if w > 0:
+            target[rdim - w:] = 1
+
+        # Build a permutation π such that (P @ v) = target,
+        # where (P @ v)[i] = v[π[i]].
+        ones_src = [i for i in range(rdim) if v_arr[i] == 1]
+        zeros_src = [i for i in range(rdim) if v_arr[i] == 0]
+        ones_tgt = list(range(rdim - w, rdim))
+        zeros_tgt = list(range(0, rdim - w))
+
+        pi = [0] * rdim  # π[i] = source index used to fill target position i
+        # Map zeros
+        for tgt_i, src_i in zip(zeros_tgt, zeros_src):
+            pi[tgt_i] = src_i
+        # Map ones
+        for tgt_i, src_i in zip(ones_tgt, ones_src):
+            pi[tgt_i] = src_i
+
+        # Build permutation matrix P with P[i, pi[i]] = 1
+        P = np.zeros((rdim, rdim), dtype=int)
+        for i in range(rdim):
+            P[i, pi[i]] = 1
+
+        img = P @ v_arr
+        assert np.array_equal(img, target), "Permutation construction failed."
+
+        return tuple(target.tolist()), P.tolist()
+
+    # Generic case: use full Aut(G) machinery.
     v_norm = tuple(int(v_i) % moduli[i] for i, v_i in enumerate(v))
 
     # Zero vector is fixed by all automorphisms
@@ -173,7 +227,7 @@ def _canonical_rep_and_auto(p, lambdas, v):
 @lru_cache(maxsize=None)
 def _lex_minimal_vectors_cached(p, lambdas):
     """
-    Cached core for lex_minimal_vectors.
+    Cached core for lex_minimal_vectors (generic case).
 
     Enumerates all elements of G and collapses them to their
     lexicographically minimal Aut(G)-orbit representatives.
@@ -246,16 +300,80 @@ def rank_mod_p(rows, p):
 def automorphisms_fixing_vectors(p, lambdas, Z_wt, fixed_vectors):
     """
     Public wrapper that normalizes arguments then delegates to the cached core.
+
+    SPECIAL CASE: for G = (Z/2Z)^6 (p=2, lambdas=(1,...,1)), we restrict
+    automorphisms to coordinate permutations (S_6). In that case we use
+    a dedicated, small implementation to avoid gigantic GL(6,2) blow-ups.
     """
     lambdas_t = tuple(int(l) for l in lambdas)
     fixed_t = tuple(tuple(int(x) for x in v) for v in fixed_vectors)
+
+    # Special-case (Z/2Z)^6 with coordinate permutations
+    if p == 2 and lambdas_t == (1, 1, 1, 1, 1, 1):
+        return _automorphisms_fixing_vectors_Z2_6_perm(Z_wt, fixed_t)
+
+    # Generic case
     return _automorphisms_fixing_vectors_cached(p, lambdas_t, int(Z_wt), fixed_t)
+
+
+def _automorphisms_fixing_vectors_Z2_6_perm(Z_wt, fixed):
+    """
+    Special-case automorphisms_fixing_vectors for G = (Z/2Z)^6 with
+    automorphisms restricted to coordinate permutations (S_6).
+
+    We return:
+        mats   : np.ndarray (num_aut, 6, 6) of permutation matrices
+        shifts : np.ndarray (num_aut, 6) of zeros (no shifts)
+
+    Constraint: every fixed vector is pointwise fixed by the permutation
+    (i.e. P v = v).
+    """
+    r = 6
+    moduli = np.array([2] * r, dtype=int)
+
+    fixed = list(fixed)
+    t = len(fixed)
+
+    if t == 0:
+        # No constraints: full S_6
+        perms = list(permutations(range(r)))
+    else:
+        # Normalize fixed vectors mod 2
+        fixed_norm = [
+            [int(v[j]) % moduli[j] for j in range(r)]
+            for v in fixed
+        ]
+
+        perms = []
+        for pi in permutations(range(r)):
+            _maybe_check_timeout()
+            ok = True
+            for v in fixed_norm:
+                # Apply permutation: (P @ v)[i] = v[pi[i]]
+                w = [v[pi[i]] for i in range(r)]
+                if w != v:
+                    ok = False
+                    break
+            if ok:
+                perms.append(pi)
+
+    if not perms:
+        return (np.empty((0, r, r), dtype=int),
+                np.empty((0, r), dtype=int))
+
+    mats = np.zeros((len(perms), r, r), dtype=int)
+    for idx, pi in enumerate(perms):
+        for i in range(r):
+            mats[idx, i, pi[i]] = 1
+
+    shifts = np.zeros((len(perms), r), dtype=int)
+    return mats, shifts
 
 
 @lru_cache(maxsize=None)
 def _automorphisms_fixing_vectors_cached(p, lambdas, Z_wt, fixed):
     """
-    Cached core for automorphisms_fixing_vectors.
+    Cached core for automorphisms_fixing_vectors (generic case).
 
     Additional rule (for p == 2): only keep automorphisms whose shift vector
     has *even* entries in every component (mod the corresponding modulus).
@@ -497,18 +615,66 @@ def push_to_lex_minimal(p, lambdas, v):
 
     Returns an automorphism matrix A (list of rows) such that A * v
     equals the lexicographically minimal representative of the Aut(G)-orbit
-    of v, where G = ⊕ Z/p^{λ_i}Z.
+    of v.
+
+    SPECIAL CASE: for G = (Z/2Z)^6 we use the S_6 permutation-based
+    canonical representative described in _canonical_rep_and_auto.
     """
     lambdas_t = tuple(int(l) for l in lambdas)
     v_t = tuple(int(x) for x in v)
+
+    # Special-case (Z/2Z)^6 with permutations only
+    if p == 2 and lambdas_t == (1, 1, 1, 1, 1, 1):
+        return _push_to_lex_minimal_Z2_6(v_t)
+
+    # Generic
     return _push_to_lex_minimal_cached(p, lambdas_t, v_t)
+
+
+def _push_to_lex_minimal_Z2_6(v):
+    """
+    Special-case for G = (Z/2Z)^6 with automorphisms = coordinate permutations.
+
+    We construct a permutation matrix P with P @ v = w, where w is the
+    lexicographically minimal representative in the S_6-orbit of v, namely
+    [0,...,0,1,...,1] with Hamming weight(v) ones at the end.
+    """
+    rdim = 6
+    v_arr = np.array(v, dtype=int) % 2
+    if v_arr.shape[0] != rdim:
+        raise ValueError("For the special Z2^6 case, v must have length 6.")
+
+    if np.all(v_arr == 0):
+        return np.eye(rdim, dtype=int).tolist()
+
+    w = int(v_arr.sum())
+    target = np.zeros(rdim, dtype=int)
+    target[rdim - w:] = 1
+
+    ones_src = [i for i in range(rdim) if v_arr[i] == 1]
+    zeros_src = [i for i in range(rdim) if v_arr[i] == 0]
+    ones_tgt = list(range(rdim - w, rdim))
+    zeros_tgt = list(range(0, rdim - w))
+
+    pi = [0] * rdim
+    for tgt_i, src_i in zip(zeros_tgt, zeros_src):
+        pi[tgt_i] = src_i
+    for tgt_i, src_i in zip(ones_tgt, ones_src):
+        pi[tgt_i] = src_i
+
+    P = np.zeros((rdim, rdim), dtype=int)
+    for i in range(rdim):
+        P[i, pi[i]] = 1
+
+    img = P @ v_arr
+    assert np.array_equal(img, target), "Permutation construction failed in _push_to_lex_minimal_Z2_6."
+    return P.tolist()
 
 
 @lru_cache(maxsize=None)
 def _push_to_lex_minimal_cached(p, lambdas, v):
     """
-    Cached core for push_to_lex_minimal, now implemented via
-    the canonical representative machinery.
+    Cached core for push_to_lex_minimal (generic case).
     """
     _, A = _canonical_rep_and_auto(p, lambdas, v)
     return A
