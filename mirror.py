@@ -18,9 +18,7 @@ from util import binary_rank, symp2Pauli, stimify_symplectic
 from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
-import tesseract_decoder
-import tesseract_decoder.tesseract as tesseract
-import time
+
 
 """
 Part I: Mapping the mirror code parameterization to a canonical stabilizer tableau.
