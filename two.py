@@ -5,17 +5,8 @@ import argparse
 def twos(args):
     arg = args.index
     arr = [
-            [2, 2, 2, 2, 2, 2],
-            [64],
-            [2, 32],
-            [2, 2, 2, 2, 4],
-            [4, 16],
-            [4, 4, 4],
-            [8, 8],
-            [2, 4, 8],
-            [2, 2, 16],
-            [2, 2, 4, 4],
-            [2, 2, 2, 8]
+            [3, 3, 3, 3, 3],
+            [3, 3, 3, 9],
           ][arg]
     search._subgroup_codes_and_bins(3, 3, arr, time.monotonic())
 

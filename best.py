@@ -8,15 +8,17 @@ for i in range(301):
             data = pickle.load(f)
         for code in data:
             codes.add((i, code[4], code[5], code[3]))
-sortedCodes = [[[] for j in range(101)] for i in range(51)]
-CSScodes = [[[] for j in range(101)] for i in range(51)]
+            if code[5] > 16:
+                print(code)
+sortedCodes = [[[] for j in range(101)] for i in range(201)]
+CSScodes = [[[] for j in range(101)] for i in range(201)]
 for i in codes:
     if i[2] >= 0:
         sortedCodes[int(2 * i[2])][i[1]] += [i[0]]
         if i[3]:
             CSScodes[int(2 * i[2])][i[1]] += [i[0]]
 filtered = []
-for d in range(51):
+for d in range(201):
     for k in range(101):
         sortedCodes[d][k].sort()
         for code in set(sortedCodes[d][k]):

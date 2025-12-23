@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH -n 2  # number of cores
+#SBATCH -n 1  # number of cores
 #SBATCH -t 0-12:00  # Runtime DAYS-HRS:MIN
 #SBATCH -p mit_normal  # Node partition, don't change this
-#SBATCH --mem-per-cpu=160GB  # Request memory per CPU
+#SBATCH --mem-per-cpu=300GB  # Request memory per CPU
 #SBATCH -o out/out_%A_%a.txt  # Redirect output to output_JOBID.txt
 #SBATCH -e err/err_%A_%a.txt  # Redirect errors to error_JOBID.txt
 #SBATCH --mail-type=END  # Mail when job ends

@@ -29,7 +29,7 @@ from util import find_strides, index_to_array, partitions
 # Global time limit (per *call* to find_all_codes)
 # ============================================================
 
-TIME_LIMIT_SECONDS = 28800
+TIME_LIMIT_SECONDS = 18000
 
 
 def _elapsed(start_time: float) -> float:
@@ -684,6 +684,7 @@ def _subgroup_codes_and_bins(Z_wt: int, X_wt: int, block, start_time: float):
     # 2) Check for an in-progress snapshot of this subgroup's permutation_bins.
     if os.path.exists(inprog_path):
         with open(inprog_path, "rb") as f:
+            print(inprog_path)
             data = pickle.load(f)
         codes_block = [np.asarray(code, dtype=np.int16) for code in data["codes_block"]]
         block_spos = np.asarray(data["block_spos"], dtype=np.int8)
