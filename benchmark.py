@@ -25,16 +25,16 @@ class StabilizerCode():
         Let the code have n physical qubits and a tableau of r stabilizers.
 
         Params:
-            * stabilizers (numpy.ndarray): r x 2n matrix whose rows are stabilizers in [Z | X] symplectic form.
+            * stabilizers (list[stim.PauliString]): list of stabilizers in stim Pauli string form.
             * name (str, Optional): name of the code
             * verbose (bool, Optional): if True, prints log of benchmarking
         
         Returns:
             None
         """
-        self.stabilizers = stimify_symplectic(stabilizers)
+        self.stabilizers = stabilizers
         completed_tableau = stim.Tableau.from_stabilizers(
-            self.stabilizers,
+            stabilizers,
             allow_redundant=True,
             allow_underconstrained=True,
         )
@@ -56,7 +56,9 @@ class StabilizerCode():
         self.name = name
 
         if self.verbose:
-            print(f"Initialized StabilizerCode. Stabilizer tableau = \n{self.stabilizers}")
+            print(f"Initialized StabilizerCode. Stabilizer tableau:")
+            for stab in stabilizers:
+                print(stab)
         return
     
     def benchmark(self, sec, num_shots = 1000):
@@ -111,7 +113,7 @@ class StabilizerCode():
 
         return results
 
-    def parallel_benchmark(self, p_datas, p_meass, p1s, p2s, sec_maker_fn, 
+    def parallel_benchmark(self, p_datas, secs, 
                            rounds_choices = [3, 5, 7], num_shots = 1000, phenomenological=False,
                            plot=False, save_as="./result.jpeg"):
         """
@@ -122,10 +124,6 @@ class StabilizerCode():
         runs these asynchronously in parallel.
         
         Params:
-            * p_datas (list:float): probability of error during data transmission; modeled as 1-qubit depolarizing channels before SEC.
-            * p_meass (list:float): probability of error during measurement; modeled as bit flip error on measurement result.
-            * p1s (list:float): probability of error for every 1-qubit operation, modeled as 1-qubit depolarizing channel.
-            * p2s (list:float): probability of error for every 2-qubit operation, modeled as 2-qubit depolarizing channel.
             * sec_maker_fn (function): function which on input (p_datas, p1s, p2s, num_rounds) returns the appropriate SEC. This function
                                        should also accept an optional argument `phenomenological` which if true uses phenomenological noise.
             * rounds_choices (list:int): list of choices for number of rounds of syndrome extraction.
@@ -135,21 +133,15 @@ class StabilizerCode():
         Returns:
             * Logical error rates (list:float) = num trials with logical error / num_shots
         """
-        num_noise = len(p_datas)
         num_round_choices = len(rounds_choices)
-        assert len(p_meass) == len(p1s) == len(p2s) == num_noise, f"Noise parameter lists must all be the same length."
-        noises = [(p_datas[i], p_meass[i], p1s[i], p2s[i]) for i in range(num_noise)]
+        num_noise = len(secs) // num_round_choices
 
-        def make_sec_and_benchmark(num_rounds, probabilities):
-            p_data, p_meas, p1, p2 = probabilities
-            sec = sec_maker_fn(p_data=p_data, p_meas=p_meas, p1=p1, p2=p2, num_rounds=num_rounds, phenomenological=phenomenological)
-            if self.verbose:
-                print(f"Benchmarking noise {probabilities} with {num_rounds} rounds")
-            return self.benchmark(sec=sec, num_shots=num_shots)
+        def benchmark_worker(sec):
+            results = self.benchmark(sec=sec, num_shots=num_shots)
+            return results['num_errors'] / num_shots
             
-        args = list(product(rounds_choices, noises))
         with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-            results = pool.starmap(make_sec_and_benchmark, args)
+            results = pool.starmap(benchmark_worker, secs) # TODO: pickling error, how to starmap local function?
         
         # Currently, `results` is a flattened array. Unflatten before returning.
         results_np = np.zeros((num_round_choices, num_noise))
