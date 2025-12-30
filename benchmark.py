@@ -14,6 +14,80 @@ import tesseract_decoder.tesseract as tesseract
 import time
 
 
+#https://arxiv.org/pdf/2108.10457
+def noise(p = 0.001, name = 'SD'):
+    if name == 'SD':
+        return {
+            'p2': p,
+            'p1': p,
+            'p_init': p,
+            'p_meas': p,
+            'p_idle': p,
+        }
+    else:
+        return {
+            'p2': p,
+            'p1': p / 10,
+            'p_init': 2 * p,
+            'p_meas': 5 * p,
+            'p_idle': p / 10,
+            'p_res_idle': 2 * p,
+        }
+
+
+def benchmark(sec, num_shots = 1000, verbose=False):
+        """
+        Benchmark the decoding performance of a code under a single set of parameters.
+
+        Params:
+            * sec (stim.Circuit): syndrome extraction circuit (SEC) for the stabilizer code.
+              The noise model should be pre-incorporated into the SEC.
+            * num_shots (int): number of trials to conduct.
+        
+        Returns:
+            * results (dict): 'num_errors': number of shots with errors
+                              'num_shots': number of shots total
+                              'time_seconds': time it took to decode, in seconds
+        """
+        # Prepare tesseract decoder
+        dem = sec.detector_error_model()
+        tesseract_config = tesseract.TesseractConfig(
+            dem=dem,
+            pqlimit=10000,
+            no_revisit_dets=True,
+            verbose=False,
+            det_orders=tesseract_decoder.utils.build_det_orders(
+                dem, num_det_orders=1,
+                method=tesseract_decoder.utils.DetOrder.DetIndex,
+                seed=137),
+        )
+        tesseract_dec = tesseract_config.compile_decoder()
+
+        # Sample noise
+        sampler = sec.compile_detector_sampler()
+        dets, obs = sampler.sample(num_shots, separate_observables=True)
+        
+        # Run decoder on the noise
+        num_errors = 0
+        start_time = time.time()
+        obs_predicted = tesseract_dec.decode_batch(dets)
+        end_time = time.time()
+        num_errors = np.sum(np.any(obs_predicted != obs, axis=1))
+
+        results = {
+            'num_errors': num_errors,
+            'num_shots': len(dets),
+            'time_seconds': end_time - start_time,
+        }
+
+        if verbose:
+            print("Tesseract Decoder Stats:")
+            print(f"   Number of Errors / num_shots: {results['num_errors']} / {results['num_shots']}")
+            print(f"   Time: {results['time_seconds']:.4f} s")
+
+        return results
+
+
 class StabilizerCode():
     """
     Class structure for a generic stabilizer code, specified by its stabilizer tableau.
@@ -54,6 +128,7 @@ class StabilizerCode():
         self.logicals = self.logical_zs + self.logical_xs
         self.verbose = verbose
         self.name = name
+        self.num_logicals = len(self.logical_zs)
 
         if self.verbose:
             print(f"Initialized StabilizerCode. Stabilizer tableau:")
@@ -61,59 +136,8 @@ class StabilizerCode():
                 print(stab)
         return
     
-    def benchmark(self, sec, num_shots = 1000):
-        """
-        Benchmark the decoding performance of a code under a single set of parameters.
 
-        Params:
-            * sec (stim.Circuit): syndrome extraction circuit (SEC) for the stabilizer code.
-              The noise model should be pre-incorporated into the SEC.
-            * num_shots (int): number of trials to conduct.
-        
-        Returns:
-            * results (dict): 'num_errors': number of shots with errors
-                              'num_shots': number of shots total
-                              'time_seconds': time it took to decode, in seconds
-        """
-        # Prepare tesseract decoder
-        dem = sec.detector_error_model()
-        tesseract_config = tesseract.TesseractConfig(
-            dem=dem,
-            pqlimit=10000,
-            no_revisit_dets=True,
-            # verbose=True,
-            det_orders=tesseract_decoder.utils.build_det_orders(
-                dem, num_det_orders=1,
-                method=tesseract_decoder.utils.DetOrder.DetIndex,
-                seed=137),
-        )
-        tesseract_dec = tesseract_config.compile_decoder()
-
-        # Sample noise
-        sampler = sec.compile_detector_sampler()
-        dets, obs = sampler.sample(num_shots, separate_observables=True)
-        
-        # Run decoder on the noise
-        num_errors = 0
-        start_time = time.time()
-        obs_predicted = tesseract_dec.decode_batch(dets)
-        end_time = time.time()
-        num_errors = np.sum(np.any(obs_predicted != obs, axis=1))
-
-        results = {
-            'num_errors': num_errors,
-            'num_shots': len(dets),
-            'time_seconds': end_time - start_time,
-        }
-
-        if self.verbose:
-            print("Tesseract Decoder Stats:")
-            print(f"   Number of Errors / num_shots: {results['num_errors']} / {results['num_shots']}")
-            print(f"   Time: {results['time_seconds']:.4f} s")
-
-        return results
-
-    def parallel_benchmark(self, p_datas, secs, 
+    def parallel_benchmark(self, ps, secs, 
                            rounds_choices = [3, 5, 7], num_shots = 1000, phenomenological=False,
                            plot=False, save_as="./result.jpeg"):
         """
@@ -136,26 +160,29 @@ class StabilizerCode():
         num_round_choices = len(rounds_choices)
         num_noise = len(secs) // num_round_choices
 
-        def benchmark_worker(sec):
-            results = self.benchmark(sec=sec, num_shots=num_shots)
-            return results['num_errors'] / num_shots
+        args = [(sec, num_shots) for sec in secs]
             
         with multiprocessing.Pool(processes=multiprocessing.cpu_count()) as pool:
-            results = pool.starmap(benchmark_worker, secs) # TODO: pickling error, how to starmap local function?
+            results = pool.starmap(benchmark, args)
         
         # Currently, `results` is a flattened array. Unflatten before returning.
-        results_np = np.zeros((num_round_choices, num_noise))
-        for i in range(num_round_choices):
+        # Also, compute the logical error rate per cycle
+        logical_error_rates = np.zeros((num_round_choices, num_noise))
+        for i, num_rounds in enumerate(rounds_choices):
             for j in range(num_noise):
-                results_np[i, j] = results[i*num_noise + j]
-        
+                logical_error_rates[i, j] = 1 - (1 - results[i*num_noise + j]['num_errors'] / num_shots)**(1/num_rounds)
+
         if plot:
+            # Compute the physical error rate
+            physical_error_rates = 1 - (1 - ps)**self.num_logicals
+
             # Make a plot of the logical versus the physical error rate
             colors = plt.cm.tab10(np.linspace(0, 1, num_round_choices))
             for i, nrd in enumerate(rounds_choices):
-                plt.loglog(p_datas, results[i], color=colors[i], label=nrd, 
-                         marker='o', markersize=10, markeredgewidth=2,
+                plt.loglog(ps, logical_error_rates[i], color=colors[i], label=nrd, 
+                         marker='o', markersize=6, markeredgewidth=2,
                          linestyle='-')
+            plt.loglog(ps, physical_error_rates, color='gray', linestyle='--')
             plt.grid()
             plt.grid(which="minor", color="0.9")
             plt.legend(title='Rounds')
@@ -166,7 +193,7 @@ class StabilizerCode():
             plt.tight_layout()
             plt.savefig(save_as)
         
-        return results_np
+        return logical_error_rates
 
     def pseudothreshold(self, phenomenological=False, round_choices=[3, 5, 7]):
         """
