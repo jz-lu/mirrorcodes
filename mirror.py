@@ -24,6 +24,7 @@ import time
 
 
 """
+DESCRIPTION OUT OF DATE. CANONICALIZATION AND SEARCH IS NOW ENTIRELY IN SEARCH.PY
 Part I: Mapping the mirror code parameterization to a canonical stabilizer tableau.
 
 We specify a mirror code by giving an abelian group description (a tuple of prime powers describing a 
@@ -34,266 +35,6 @@ By canonical, we mean that it is the unique representative under a set of operat
 These include swapping the Z and X subsets, permuting the elements of the subsets, automorphisms of the group, etc.
 By having a canonical representation, we save a great deal of space during numerical search of the code.
 """
-
-def _pair_lex_key(group, z0, x0):
-    """
-    Internal utility. Build a lex key for comparing pairs (Z0, X0).
-    Shorter first list first, then lex on Z0, then shorter second list, then lex on X0.
-    """
-    n = int(np.prod(group))
-    strides = find_strides(group)
-    z_combiner = find_strides([n] * len(z0))
-    x_combiner = find_strides([n] * len(x0))
-    z_idx = int(z_combiner @ z0 @ strides) if len(z0) else 0
-    x_idx = int(x_combiner @ x0 @ strides) if len(x0) else 0
-    return (len(z0), z_idx, len(x0), x_idx)
-
-
-def _twoG_iter(group):
-    """
-    Iterate over all elements of 2G = {2t : t in G} componentwise.
-    For odd modulus m, this is all residues 0..m-1 (step 1).
-    For even modulus m, this is the even residues 0,2,4,...,m-2 (step 2).
-    """
-    steps = [1 if m % 2 else 2 for m in group]
-    return it.product(*[range(0, m, s) for m, s in zip(group, steps)])
-
-
-def _column_permutations_by_size(group):
-    """
-    Build all column permutations that permute only among equal-size cyclic factors.
-    This models all isomorphisms that arise from reordering isomorphic factors.
-    """
-    # collect indices per modulus
-    by_size = {}
-    for idx, m in enumerate(group):
-        by_size.setdefault(int(m), []).append(idx)
-    # list of permutations per block
-    per_block = [list(it.permutations(block)) for block in by_size.values()]
-    # product to yield a full-column permutation each time
-    for choice in it.product(*per_block):
-        # start with identity mapping
-        perm = list(range(len(group)))
-        for block_perm in choice:
-            # block_perm is a permutation tuple of original indices belonging to one block
-            # place them into the same positions they originally occupied, reordered
-            for new_pos, old_idx in zip(sorted(block_perm), block_perm):
-                perm[new_pos] = old_idx
-        yield tuple(perm)
-
-
-def canonicalize_perms(group, z0, x0, isos, strides):
-    """
-    Secondary canonicalizer. This accepts the sets z0 and x0 and returns a guess
-    for the canonical z0 and x0. Applies all tricks other than swapping z0 and x0.
-    Various equivalences that this tries are reordering Z0 and X0, applying an
-    automorphism to any component group, including permutations of equal-size
-    cyclic factors, and shifting the X0's by 2g, for some g (with the Z/X common
-    torsor anchor already applied).
-
-    Params:
-        * group (np.ndarray): 1D Array of all the group sizes in the factored
-          version of the group. Also accepts tuple.
-        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed
-          along the group dimensions. Number of columns should match length of group
-          and not exceed the terms of group. Number of rows is the Z weight. Also
-          accepts tuples at any level.
-        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed
-          along the group dimensions. Number of columns should match length of group
-          and not exceed the terms of group. Number of rows is the X weight. Also
-          accepts tuples at any level.
-        * isos (np.ndarray): list of lists containing per-component multiplicative
-          automorphisms (units). Column permutations among equal-size factors
-          are also enumerated here.
-        * strides (np.ndarray): strides for indexing qubits
-
-    Returns:
-        * Tuple containinng two elements. The first is the canonical version of z0,
-          the second is the canonical version of x0.
-    """
-    group = np.array(group)
-    z0 = np.array(z0)
-    x0 = np.array(x0)
-    n = int(np.prod(group))
-
-    # initialize current minimum
-    best_z, best_x = z0.copy(), x0.copy()
-    best_key = _pair_lex_key(group, best_z, best_x)
-
-    z_combiner = find_strides([n] * len(z0))
-    x_combiner = find_strides([n] * len(x0))
-
-    # Enumerate column permutations within equal-size factor blocks
-    for col_perm in _column_permutations_by_size(group):
-        z_cols = z0[:, col_perm]
-        x_cols = x0[:, col_perm]
-
-        # Iterate over all permutations for z-rows
-        for z_rows in it.permutations(z_cols):
-            z_rows = np.array(z_rows)
-            # Anchor torsor: subtract first z to make z'[0]=0
-            z_anch = np.mod(z_rows - z_rows[0], group)
-
-            # Apply all component automorphisms (same multiplier vector to both sets)
-            for a in it.product(*isos):
-                a = np.array(a)
-                z_iso = np.mod(z_anch * a, group)
-
-                # Early pruning on Z
-                z_idx = int(z_combiner @ z_iso @ strides)
-                if (len(z_iso), z_idx) > (len(best_z), int(z_combiner @ best_z @ strides)):
-                    continue
-
-                # Prepare X with same anchor (subtract original first z before iso)
-                x_base = np.mod(x_cols - z_rows[0], group)
-
-                # Enumerate X-row permutations
-                for x_rows in it.permutations(x_base):
-                    x_rows = np.array(x_rows)
-                    x_iso = np.mod(x_rows * a, group)
-
-                    # Sweep residual 2G: identity-choice degree of freedom
-                    # Use util.shift_X to minimize over all X -> X + 2q
-                    x_shift = shift_X(group, x_iso)
-
-                    key = _pair_lex_key(group, z_iso, x_shift)
-                    if key < best_key:
-                        best_key = key
-                        best_z, best_x = z_iso, x_shift
-
-    return best_z, best_x
-
-
-def canonicalize(group, z0, x0):
-    """
-    Main canonicalizer. This accepts the sets z0 and x0 and returns the canonical
-    isomorphic z0 and x0. The canonical form over equivalent codes is not unique.
-    Guarantees about this function: after canonicalization arrays z0[0] will only
-    contain 0s. Arrays of z0 and x0 are individually sorted by our lex rule.
-    Various equivalences tried are:
-      * swapping Z0 and X0 (only compared when lengths are equal),
-      * reordering Z0 and X0,
-      * automorphisms of any component group, including permutations of equal-size
-        factors (i.e., reindexing indistinguishable cyclic components),
-      * common torsor translation (Z,X)->(Z+p, X+p),
-      * identity-choice shift (Z,X)->(Z+h, X-h) which yields X->X+2q residual.
-
-    Params:
-        * group (np.ndarray): 1D Array of all the group sizes in the factored
-          version of the group. Also accepts tuple.
-        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed
-          along the group dimensions.
-        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed
-          along the group dimensions.
-
-    Returns:
-        * Tuple containinng two elements. The first is the canonical version of z0,
-          the second is the canonical version of x0.
-    """
-    group = np.array(group)
-    z0 = np.array(z0)
-    x0 = np.array(x0)
-    isos = find_isos(group)  # units per component
-    strides = find_strides(group)
-
-    # Always orient so the shorter list is first unless lengths are equal.
-    if len(z0) > len(x0):
-        return canonicalize(group, x0, z0)
-
-    # Option 1: keep (Z, X)
-    z1, x1 = canonicalize_perms(group, z0, x0, isos, strides)
-
-    # Option 2: swap (X, Z) only when same length, mirroring original behavior
-    if len(z0) == len(x0):
-        z2, x2 = canonicalize_perms(group, x0, z0, isos, strides)
-        return (z1, x1) if _pair_lex_key(group, z1, x1) <= _pair_lex_key(group, z2, x2) else (z2, x2)
-
-    return (z1, x1)
-
-
-def is_Z_canonical(group, z0, isos):
-    """
-    Canonicalization checker for just Z's. Does not check legality. Merely checks
-    whether it can find a smaller equivalent z0 instance under:
-      * reordering within Z0,
-      * automorphisms of component groups (units),
-      * permutations among equal-size cyclic factors,
-      * a single torsor anchor (shift so first row is 0).
-
-    Params:
-        * group (np.ndarray): 1D Array of all the group sizes in the factored
-          version of the group. Also accepts tuple.
-        * z0 (np.ndarray): 2D Array of all the elements of Z0, already decomposed
-          along the group dimensions.
-        * isos (list of lists): list of per-component units
-
-    Returns:
-        * Boolean with whether z0 is canonical.
-    """
-    group = np.array(group)
-    z0 = np.array(z0)
-
-    strides = find_strides(group)
-    combiner = find_strides([int(np.prod(group))] * len(z0))
-    base_index = int(combiner @ z0 @ strides)
-
-    for col_perm in _column_permutations_by_size(group):
-        z_cols = z0[:, col_perm]
-        for rows in it.permutations(z_cols):
-            rows = np.array(rows)
-            shifted = np.mod(rows - rows[0], group)
-            for a in it.product(*isos):
-                a = np.array(a)
-                cand = np.mod(shifted * a, group)
-                if int(combiner @ cand @ strides) < base_index:
-                    return False
-    return True
-
-
-def is_X_canonical(group, x0, isos):
-    """
-    Canonicalization checker for just X's. Does not check legality. Merely checks
-    whether it can find a smaller equivalent x0 instance under:
-      * reordering within X0,
-      * automorphisms of component groups (units),
-      * permutations among equal-size cyclic factors,
-      * the same torsor anchor (first row to 0),
-      * an independent residual sweep over 2G.
-
-    Params:
-        * group (np.ndarray): 1D Array of all the group sizes in the factored
-          version of the group. Also accepts tuple.
-        * x0 (np.ndarray): 2D Array of all the elements of X0, already decomposed
-          along the group dimensions.
-        * isos (list of lists): list of per-component units
-
-    Returns:
-        * Boolean with whether x0 is canonical.
-    """
-    group = np.array(group)
-    x0 = np.array(x0)
-
-    strides = find_strides(group)
-    combiner = find_strides([int(np.prod(group))] * len(x0))
-
-    # Baseline: anchor by subtracting first row, then minimize over residual 2G only
-    base_anch = np.mod(x0 - x0[0], group)
-    base_idx = min(int(combiner @ (np.mod(base_anch + np.array(delta), group)) @ strides)
-                   for delta in _twoG_iter(group))
-
-    for col_perm in _column_permutations_by_size(group):
-        x_cols = x0[:, col_perm]
-        for rows in it.permutations(x_cols):
-            rows = np.array(rows)
-            anch = np.mod(rows - rows[0], group)
-            for a in it.product(*isos):
-                a = np.array(a)
-                cand = np.mod(anch * a, group)
-                cand_min_idx = min(int(combiner @ (np.mod(cand + np.array(delta), group)) @ strides)
-                                   for delta in _twoG_iter(group))
-                if cand_min_idx < base_idx:
-                    return False
-    return True
 
 
 def build_set(group, a, b):
@@ -428,6 +169,26 @@ Part II: stim circuit manipulation
 Here we have some custom functions which modify a stim circuit in place for numerical analysis purposes.
 """
 
+#https://arxiv.org/pdf/2108.10457
+def noise(p = 0.001, name = 'SD'):
+    if name == 'SD':
+        return {
+            'p2': p,
+            'p1': p,
+            'p_init': p,
+            'p_meas': p,
+            'p_idle': p,
+        }
+    else:
+        return {
+            'p2': p,
+            'p1': p / 10,
+            'p_init': 2 * p,
+            'p_meas': 5 * p,
+            'p_idle': p / 10,
+            'p_res_idle': 2 * p,
+        }
+
 def pauli_to_observable_include_target(pauli: stim.PauliString) -> list[stim.GateTarget]:
     obs_pauli_targets = []
     for i in range(len(pauli)):
@@ -443,7 +204,7 @@ def append_observable_includes_for_paulis(circuit: stim.Circuit, paulis: list[st
             arg=i
         )
     
-def append_noisy_gate(circuit : stim.Circuit, gate : str, locality : int, qubits : list, p : float):
+def append_noisy_gate(circuit : stim.Circuit, gate : str, locality : int, qubits : list, p : float, *p2):
     """
     Inserts a noisy gate into the circuit by adding the desired gate, preceded by a depolarizing error.
     Only supports 1- and 2-qubit gates. 
@@ -462,8 +223,14 @@ def append_noisy_gate(circuit : stim.Circuit, gate : str, locality : int, qubits
         * None (modifies the circuit in place).
     """
     assert locality in [1, 2], f"Only 1- and 2-qubit gates supported, but got {locality}-qubit gate request"
+    measure = gate in ['MZ', 'MX', 'MRX', 'MRZ']
+    if measure:
+        circuit.append(f"DEPOLARIZE{locality}", qubits, p)
     circuit.append(gate, qubits)
-    circuit.append(f"DEPOLARIZE{locality}", qubits, p)
+    if not measure:
+        circuit.append(f"DEPOLARIZE{locality}", qubits, p)
+    if gate in ['MRX', 'MRZ']:
+        circuit.append(f"DEPOLARIZE{locality}", qubits, p2)
     return
 
 """
@@ -1155,7 +922,7 @@ class MirrorCode():
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
     
-    def superdense(self, p_data, p1, p2, num_rounds=3) -> stim.Circuit:
+    def superdense(self, model, p, num_rounds=3) -> stim.Circuit:
         sec = stim.Circuit()
         stabilizers = self.get_stabilizers()
         n = self.get_n()
@@ -1164,11 +931,18 @@ class MirrorCode():
         ANCILLA_PER_STAB = 2
         assert n % 2 == 0
 
+        noise_dict = noise(p)
+        p1 = noise_dict['p1']
+        p2 = noise_dict['p2']
+        p_init = noise_dict['p_init']
+        p_meas = noise_dict['p_meas']
+        p_idle = noise_dict['p_idle']
+
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
 
         for stabilizer_stim in stabilizers_stim:
             sec.append("MPP", stabilizer_stim)
-        sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
+        sec.append("DEPOLARIZE1", [i for i in range(n)], p_init)
         
         stab_pairs = []
         for i in range(0, n, 2):
@@ -1187,7 +961,7 @@ class MirrorCode():
                 Z_supp2 = [i for i in range(n) if Z_part2[i] != 0]
 
                 if round_idx == 0:
-                    append_noisy_gate(sec, "RX", 1, [base, base + 1], p1)
+                    append_noisy_gate(sec, "RX", 1, [base, base + 1], p_init)
                 
                 append_noisy_gate(sec, "CZ", 2, [base, base + 1], p2)
 
@@ -1206,7 +980,10 @@ class MirrorCode():
 
                 append_noisy_gate(sec, "CZ", 2, [base, base + 1], p2)
 
-                append_noisy_gate(sec, "MRX", 1, [base, base + 1], p1)
+                if round_idx == num_rounds - 1:
+                    append_noisy_gate(sec, "MX", 1, [base, base + 1], p_meas)
+                else:
+                    append_noisy_gate(sec, "MRX", 1, [base, base + 1], p_meas, p_init)
 
                 sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-n - 1)])
                 sec.append("DETECTOR", targets=[stim.target_rec(-2), stim.target_rec(-n - 2)])
@@ -1215,7 +992,7 @@ class MirrorCode():
         return sec
     
 
-    def benchmark(self, p_data : float, p_meas : float, p1 : float, p2 : float, num_rounds : int = 3, num_shots : int = 1000, phenomenological=False):
+    def benchmark(self, model : str, p : float, num_rounds : int = 3, num_shots : int = 1000, phenomenological=False):
         """
         Use a decoder to numerically compute the logical error rate of the code.
         We use Tesseract, a heuristic-enhanced BP+OSD-type decoder which natively interacts with stim.
@@ -1231,16 +1008,13 @@ class MirrorCode():
             * phenomenological (bool): if True, the SEC will only put data errors (i.e. p_data before each round) and measurement errors.
 
         """
-        assert 0 <= p_data <= 3/4, f"Data error probability {p_data} must be within [0, 3/4]"
-        assert 0 <= p_meas <= 1/2, f"Measurement error probability {p_meas} must be within [0, 1/2]"
-        assert 0 <= p1 <= 3/4, f"1-qubit error probability {p1} must be within [0, 3/4]"
-        assert 0 <= p1 <= 15/16, f"2-qubit error probability {p2} must be within [0, 15/16]"
+        assert 0 <= p <= 1/2, f"Error probability {p} must be within [0, 1/2]"
 
         print("Making the syndrome extraction circuit...")
         # sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=1)
         # sec = self.new_sec(p_data, p1, p2, num_rounds)
         # sec = self.smart_casual_ancilla_sec(p_data, p1, p2, num_rounds)
-        sec = self.superdense(p_data, p1, p2, num_rounds)
+        sec = self.superdense(model, p, num_rounds)
         # sec = self.fully_ft_for_css(p_data, p1, p2, num_rounds)
         # sec = self.barely_dressed_ancilla_sec(p_data, p_meas, p1, p2, num_rounds)
         # sec = self.bare_ancilla_sec(p_data, p1, p2, num_rounds)
@@ -1279,7 +1053,6 @@ class MirrorCode():
 
         return
 
-        
 
 if __name__ == "__main__":
     """
@@ -1322,10 +1095,8 @@ if __name__ == "__main__":
 
 
     code.benchmark(
-        p_data = 0.04,
-        p_meas = 0.01,
-        p1 = 0.0001,
-        p2 = 0.002,
+        model = 'SD',
+        p = 0.001,
         num_rounds = 3,
         num_shots = 1000
     )
