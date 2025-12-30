@@ -872,7 +872,7 @@ class MirrorCode():
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
     
-    def fully_ft_for_css(self, p_data, p1, p2, num_rounds=3) -> stim.Circuit:
+    def fully_ft_for_css(self, model, p, num_rounds=3) -> stim.Circuit:
         sec = stim.Circuit()
         stabilizers = self.get_stabilizers()
         n = self.get_n()
@@ -880,11 +880,18 @@ class MirrorCode():
         all_logical_paulis = self.get_stim_logical_paulis()
         ANCILLA_PER_STAB = 3
 
+        noise_dict = noise(p)
+        p1 = noise_dict['p1']
+        p2 = noise_dict['p2']
+        p_init = noise_dict['p_init']
+        p_meas = noise_dict['p_meas']
+        p_idle = noise_dict['p_idle']
+
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
 
         for stabilizer_stim in stabilizers_stim:
             sec.append("MPP", stabilizer_stim)
-        sec.append("DEPOLARIZE1", [i for i in range(n)], p_data)
+        sec.append("DEPOLARIZE1", [i for i in range(n)], p_init)
         
         for round_idx in range(num_rounds):
             # Do the syndrome extraction in parallel for each stabilizer
@@ -895,8 +902,8 @@ class MirrorCode():
                 Z_supp = [i for i in range(n) if Z_part[i] != 0]
 
                 if round_idx == 0:
-                    append_noisy_gate(sec, "RX", 1, [base], p1)
-                    append_noisy_gate(sec, "RZ", 1, [base + 1, base + 2], p1)
+                    append_noisy_gate(sec, "RX", 1, [base], p_init)
+                    append_noisy_gate(sec, "RZ", 1, [base + 1, base + 2], p_init)
                 
                 append_noisy_gate(sec, "CNOT", 2, [base, base + 1], p2)
                 append_noisy_gate(sec, "CNOT", 2, [base, base + 2], p2)
@@ -905,13 +912,17 @@ class MirrorCode():
                     append_noisy_gate(sec, "CNOT", 2, [base + i, X_supp[i]], p2)
                     append_noisy_gate(sec, "CZ", 2, [base + i, Z_supp[i]], p2)
                     if Z_supp[i] in X_supp:
-                        append_noisy_gate(sec, "S", 1, [base + i], p2)
+                        append_noisy_gate(sec, "S", 1, [base + i], p1)
 
                 append_noisy_gate(sec, "CNOT", 2, [base, base + 1], p2)
                 append_noisy_gate(sec, "CNOT", 2, [base, base + 2], p2)
 
-                append_noisy_gate(sec, "MRX", 1, [base], p1)
-                append_noisy_gate(sec, "MRZ", 1, [base + 1, base + 2], p1)
+                if round_idx == num_rounds - 1:
+                    append_noisy_gate(sec, "MX", 1, [base], p_meas)
+                    append_noisy_gate(sec, "MZ", 1, [base + 1, base + 2], p_meas)
+                else:
+                    append_noisy_gate(sec, "MRX", 1, [base], p_meas, p_init)
+                    append_noisy_gate(sec, "MRZ", 1, [base + 1, base + 2], p_meas, p_init)
 
                 sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-2)])
                 if round_idx == 0:
@@ -970,13 +981,13 @@ class MirrorCode():
                 for i in Z_supp1:
                     append_noisy_gate(sec, "CZ", 2, [base, i], p2)
                     if i in X_supp1:
-                        append_noisy_gate(sec, "S", 1, [base], p2)
+                        append_noisy_gate(sec, "S", 1, [base], p1)
                 for i in X_supp2:
                     append_noisy_gate(sec, "CNOT", 2, [base + 1, i], p2)
                 for i in Z_supp2:
                     append_noisy_gate(sec, "CZ", 2, [base + 1, i], p2)
                     if i in X_supp2:
-                        append_noisy_gate(sec, "S", 1, [base + 1], p2)
+                        append_noisy_gate(sec, "S", 1, [base + 1], p1)
 
                 append_noisy_gate(sec, "CZ", 2, [base, base + 1], p2)
 
@@ -1014,8 +1025,8 @@ class MirrorCode():
         # sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=1)
         # sec = self.new_sec(p_data, p1, p2, num_rounds)
         # sec = self.smart_casual_ancilla_sec(p_data, p1, p2, num_rounds)
-        sec = self.superdense(model, p, num_rounds)
-        # sec = self.fully_ft_for_css(p_data, p1, p2, num_rounds)
+        # sec = self.superdense(model, p, num_rounds)
+        sec = self.fully_ft_for_css(model, p, num_rounds)
         # sec = self.barely_dressed_ancilla_sec(p_data, p_meas, p1, p2, num_rounds)
         # sec = self.bare_ancilla_sec(p_data, p1, p2, num_rounds)
         print("Done.")
