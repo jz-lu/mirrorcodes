@@ -88,6 +88,58 @@ def benchmark(sec, num_shots = 1000, verbose=False):
         return results
 
 
+def estimate_y_eq_x_crossing(xs, ys, *, return_all=False, atol=1e-12, rtol=1e-8):
+    """
+    Estimate where a curve (xs, ys) crosses the y = x line on a log-log plot.
+
+    Assumes log-log interpolation: treat ly = log(y) as linear between points in lx = log(x).
+    Crossing condition y = x  <=>  log(y) - log(x) = 0.
+
+    Returns:
+      - (x_cross, y_cross) with y_cross == x_cross
+      - or a list of crossings if return_all=True
+      - or None if no bracketing sign change is found
+    """
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+
+    # Need positive, finite points for logs
+    m = np.isfinite(xs) & np.isfinite(ys) & (xs > 0) & (ys > 0)
+    xs, ys = xs[m], ys[m]
+    if xs.size < 2:
+        raise ValueError("Need at least two positive, finite (x,y) points.")
+
+    # Sort by x (important for bracketing/interpolation)
+    order = np.argsort(xs)
+    xs, ys = xs[order], ys[order]
+
+    lx = np.log(xs)
+    ly = np.log(ys)
+    f = ly - lx  # zero when y=x
+
+    # Exact/near-exact hits
+    hits = np.where(np.isclose(f, 0.0, atol=atol, rtol=rtol))[0]
+    crossings = []
+    for i in hits:
+        crossings.append((xs[i], xs[i]))  # y=x at crossing
+
+    # Bracketed sign changes between consecutive points
+    idx = np.where(f[:-1] * f[1:] < 0)[0]
+    for i in idx:
+        # Linear interpolation in log-space for f
+        t = -f[i] / (f[i + 1] - f[i])  # fraction between i and i+1 where f=0
+        lx_cross = lx[i] + t * (lx[i + 1] - lx[i])
+        x_cross = float(np.exp(lx_cross))
+        crossings.append((x_cross, x_cross))
+
+    if not crossings:
+        return None
+
+    # Sort by x and return
+    crossings.sort(key=lambda p: p[0])
+    return crossings if return_all else crossings[0]
+
+
 class StabilizerCode():
     """
     Class structure for a generic stabilizer code, specified by its stabilizer tableau.
@@ -138,7 +190,7 @@ class StabilizerCode():
     
 
     def parallel_benchmark(self, ps, secs, 
-                           rounds_choices = [3, 5, 7], num_shots = 1000, phenomenological=False,
+                           rounds_choices = [3, 5, 7], num_shots = 1000,
                            plot=False, save_as="./result.jpeg"):
         """
         Benchmark a bunch of error probabilities in parallel, using a syndrome extraction circuit (SEC) with circuit-level noise.
@@ -155,7 +207,8 @@ class StabilizerCode():
             * phenomenological (bool): if True, the SEC will only put data errors (i.e. p_data before each round) and measurement errors.
         
         Returns:
-            * Logical error rates (list:float) = num trials with logical error / num_shots
+            * physical_error_rates (list:float (num_noise,)) = physical error rate per syndrome extraction cycle
+            * logical_error_rates (list:float (num_rounds, num_noise)) = logical error rate per syndrome extraction cycle
         """
         num_round_choices = len(rounds_choices)
         num_noise = len(secs) // num_round_choices
@@ -193,21 +246,28 @@ class StabilizerCode():
             plt.tight_layout()
             plt.savefig(save_as)
         
-        return logical_error_rates
+        return physical_error_rates, logical_error_rates
 
-    def pseudothreshold(self, phenomenological=False, round_choices=[3, 5, 7]):
+    def pseudothreshold(self, rounds_choices, physical_error_rates, logical_error_rates):
         """
         Compute the pseudothreshold of the code, using circuit-level noise, for each number of rounds in `round_choices`.
         
         Params:
-            * sec_maker_fn (function): function which on input (p_datas, p1s, p2s, num_rounds) returns the appropriate SEC.
-            * round_choices (list:int): list of choices for number of rounds of syndrome extraction.
-            * num_shots (float): number of trials.
-            * phenomenological (bool): if True, the SEC will only put data errors (i.e. p_data before each round) and measurement errors.
-        
+            * rounds_choices (list:int): list of choices for number of rounds of syndrome extraction.
+            * physical_error_rates (list:float (num_noise,)) = physical error rate per syndrome extraction cycle
+            * logical_error_rates (list:float (num_rounds, num_noise)) = logical error rate per syndrome extraction cycle
         Returns:
-            * pseudothresholds: (listfloat): computed pseudothreshold of the code, one for each number of rounds in `round_choices`.
+            * pseudothresholds: (list:float): computed pseudothreshold of the code, one for each number of rounds in `round_choices`.
+                Returns -1 in each element for which no threshold is found.
         """
-        pass
+        pthrs = np.zeros(len(rounds_choices))
+        for i, num_rounds in enumerate(rounds_choices):
+            pthr = estimate_y_eq_x_crossing(physical_error_rates, logical_error_rates[i])
+            if pthr == None:
+                print(f"No pseudothreshold when using {num_rounds} rounds of syndrome extraction.")
+                pthrs[i] = -1
+            else:
+                pthrs[i] = pthr
+        return pthrs
 
 
