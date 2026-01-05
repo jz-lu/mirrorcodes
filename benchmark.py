@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import stim
 import multiprocessing
-import tesseract_decoder
-import tesseract_decoder.tesseract as tesseract
+#import tesseract_decoder
+#import tesseract_decoder.tesseract as tesseract
 import time
 
 
