@@ -598,9 +598,9 @@ class MirrorCode():
         append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
         return sec
 
-    def generic_sec(self, p_data, p1, p2, num_rounds):
+    def generic_sec(self, p_depol, p_meas, num_rounds):
         """
-        A generic "fake"/unphysical syndrome extraction circuit which should work for any stabilizer tableau.
+        Generic unphysical SEC which works for any stabilizer code.
         """
         num_qubits = num_stabilizers = self.get_n()
         stabilizer_paulis = self.get_stim_tableau()
@@ -609,8 +609,8 @@ class MirrorCode():
         circuit = stim.Circuit()
 
         append_observable_includes_for_paulis(circuit=circuit, paulis=all_logicals_paulis)
-        circuit.append("MPP", stabilizer_paulis)
-        circuit.append("DEPOLARIZE1", targets=list(range(num_qubits)), arg=p_data)
+        circuit.append("MPP", stabilizer_paulis, arg=p_meas)
+        circuit.append("DEPOLARIZE1", targets=list(range(num_qubits)), arg=p_depol)
 
         for _ in range(num_rounds):
             circuit.append("MPP", stabilizer_paulis)
