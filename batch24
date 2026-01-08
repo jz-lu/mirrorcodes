@@ -9,4 +9,4 @@
 #SBATCH --mail-user=khesin@mit.edu  # Email recipient
 
 source activate my_env
-python filter.py -i data -s 3 -t 36000 -n 240 -w 20 -e -r $SLURM_ARRAY_TASK_ID
+python filter.py -i data24 -z 2 -x 4 -f -n $SLURM_ARRAY_TASK_ID
