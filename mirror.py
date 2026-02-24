@@ -13,14 +13,15 @@ The tableau is NOT in reduced form---there are dependent stabilizers! (E.g. thin
 """
 import itertools as it
 import numpy as np
+from circuit import cached_schedule
 from util import find_isos, find_strides, shift_X
 from util import binary_rank, symp2Pauli, stimify_symplectic
 from benchmark import noise
 from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
-import tesseract_decoder
-import tesseract_decoder.tesseract as tesseract
+#import tesseract_decoder
+#import tesseract_decoder.tesseract as tesseract
 import time
 
 
@@ -184,8 +185,8 @@ def append_observable_includes_for_paulis(circuit: stim.Circuit, paulis: list[st
             targets=pauli_to_observable_include_target(pauli=obs),
             arg=i
         )
-    
-def append_noisy_gate(circuit : stim.Circuit, gate : str, locality : int, qubits : list, p : float):
+
+def append_noisy_gate_old(circuit : stim.Circuit, gate : str, locality : int, qubits : list, p : float):
     """
     Inserts a noisy gate into the circuit by adding the desired gate, preceded by a depolarizing error.
     Only supports 1- and 2-qubit gates. 
@@ -212,10 +213,44 @@ def append_noisy_gate(circuit : stim.Circuit, gate : str, locality : int, qubits
         circuit.append(f"DEPOLARIZE{locality}", qubits, p)
     return
 
+    
+def append_noisy_gate(circuit : stim.Circuit, gate : str, locality : int, qubits : list, noise):
+    """
+    Inserts a noisy gate into the circuit by adding the desired gate, preceded by a depolarizing error.
+    Only supports 1- and 2-qubit gates. 
+    For a t-qubit gate, t-qubit depolarizing noise will be added after the gate.
+
+    Params:
+        * circuit (stim.Circuit): stim circuit to which the gate is to be added.
+        * gate (str): string description of the gate, e.g. 'RX' or 'CNOT'.
+        * locality (str): number of qubits the gate acts on. Should be in {1, 2}.
+        * qubits (list): the qubits on the circuit on which the gate is applied. 
+            For 1-qubit gate, will apply on every qubit in list. For 2-qubit gate, must be only 2 qubits.
+        * noise: noise model object which contains the error probabilities to be applied. Should have attributes p_init, p_idle, p_meas, p1, and p2.
+    
+    Returns:
+        * None (modifies the circuit in place).
+    """
+    assert locality in [1, 2], f"Only 1- and 2-qubit gates supported, but got {locality}-qubit gate request"
+    if gate[0] == 'M':
+        circuit.append(gate, qubits, noise['p_meas'])
+        return
+    circuit.append(gate, qubits)
+    if gate == 'RX':
+        circuit.append("Z_ERROR", qubits, noise['p_init'])
+    elif gate == 'RZ':
+        circuit.append("X_ERROR", qubits, noise['p_init'])
+    else:
+        circuit.append(f"DEPOLARIZE{locality}", qubits, noise['p1'] if locality == 1 else noise['p2'])
+    return
+
+def idle(circuit, qubits, noise, resonate = False):
+    for qubit in qubits:
+        circuit.append("DEPOLARIZE1", qubit, noise['p_res_idle'] if resonate else noise['p_idle'])
+
 """
 Part III: Tesseract functions
 """
-
 
 def print_decoder_results(results):
   print("Tesseract Decoder Stats:")
@@ -627,6 +662,151 @@ class MirrorCode():
         append_observable_includes_for_paulis(circuit=circuit, paulis=all_logicals_paulis)
         return circuit
 
+    def shallow_bare_ancilla_sec(self, noise, num_rounds=3) -> stim.Circuit:
+        """
+        Make a syndrome extraction circuit corresponding to the mirror code
+        instantiated in this class.
+        There is an `option` command which lets you choose from a list of 
+        circuits to return (with different fault tolerance capabilities).
+        Currently we have an optimized implementation "made by hand" which only 
+        supports weight 6 mirror codes.
+
+        Options:
+            0. Not fault-equivalent to the cat-state syndrome extraction circuit (SEC), but fewer 2-qubit gates
+            1. Fault-equivalent to the cat-state SEC.
+
+        Params:
+            * p_data (float): 1-qubit data error probability parameter in [0, 3/4] (error accrued pre-extraction).
+            * p1 (float): 1-qubit error probability parameter in [0, 3/4].
+            * p2 (float): 2-qubit error probability parameter in [0, 15/16].
+            * num_rounds (int): number of rounds of syndrome extraction. 
+            * option (int): menu of options for which circuit to output
+        
+        Returns:
+            * stim.Circuit object of the syndrome extraction circuit for the mirror code.
+        """
+        # The first n qubits are the data qubits, and will be the controls for the syndromes.
+        sec = stim.Circuit()
+        stabilizers = self.get_stabilizers()
+        n = self.get_n()
+        stabilizers_stim = stimify_symplectic(stabilizers)
+
+        circuit_solution = cached_schedule(stabilizers)[4]
+        max_tick = 0
+        for i in circuit_solution:
+            for j in i:
+                if j is not None:
+                    max_tick = max(max_tick, j)
+
+        all_logical_paulis = self.get_stim_logical_paulis()
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+
+        for stabilizer_stim in stabilizers_stim:
+            sec.append("MPP", stabilizer_stim)
+        
+        for _ in range(num_rounds):
+            # Do the syndrome extraction in parallel for each stabilizer
+            idle(sec, list(range(n)), noise)
+            for j, stab in enumerate(stabilizers):
+                append_noisy_gate(sec, "RX", 1, [n+j], noise)
+            for tick in range(1, max_tick + 1):
+                for k in range(n):
+                    idle_qubit = True
+                    for j, stab in enumerate(stabilizers):
+                        if circuit_solution[j][k] == tick:
+                            idle_qubit = False
+                            if stabilizers[j][k] == 1 and stabilizers[j][n+k] == 0:
+                                append_noisy_gate(sec, "CZ", 2, [n + j, k], noise)
+                            elif stabilizers[j][k] == 0 and stabilizers[j][n+k] == 1:
+                                append_noisy_gate(sec, "CX", 2, [n + j, k], noise)
+                            elif stabilizers[j][k] == 1 and stabilizers[j][n+k] == 1:
+                                append_noisy_gate(sec, "CY", 2, [n + j, k], noise)
+                            else:
+                                assert False, f"Invalid stabilizer entry {stabilizers[j][k]}{stabilizers[j][n+k]} at stabilizer {j} and qubit {k}"
+                    if idle_qubit:
+                        idle(sec, [k], noise)
+            idle(sec, list(range(n)), noise, resonate=True)
+            for j, stab in enumerate(stabilizers):
+                append_noisy_gate(sec, "MX", 1, [n + j], noise)
+                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-(n + 1))])
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        return sec
+    
+    def shallow_loop_flag_sec(self, noise, num_rounds=3) -> stim.Circuit:
+        """
+        Make a syndrome extraction circuit corresponding to the mirror code
+        instantiated in this class.
+        There is an `option` command which lets you choose from a list of 
+        circuits to return (with different fault tolerance capabilities).
+        Currently we have an optimized implementation "made by hand" which only 
+        supports weight 6 mirror codes.
+
+        Options:
+            0. Not fault-equivalent to the cat-state syndrome extraction circuit (SEC), but fewer 2-qubit gates
+            1. Fault-equivalent to the cat-state SEC.
+
+        Params:
+            * p_data (float): 1-qubit data error probability parameter in [0, 3/4] (error accrued pre-extraction).
+            * p1 (float): 1-qubit error probability parameter in [0, 3/4].
+            * p2 (float): 2-qubit error probability parameter in [0, 15/16].
+            * num_rounds (int): number of rounds of syndrome extraction. 
+            * option (int): menu of options for which circuit to output
+        
+        Returns:
+            * stim.Circuit object of the syndrome extraction circuit for the mirror code.
+        """
+        # The first n qubits are the data qubits, and will be the controls for the syndromes.
+        sec = stim.Circuit()
+        stabilizers = self.get_stabilizers()
+        n = self.get_n()
+        stabilizers_stim = stimify_symplectic(stabilizers)
+
+        circuit_solution = cached_schedule(stabilizers)
+        max_tick = 0
+        for i in circuit_solution:
+            for j in i:
+                if j is not None:
+                    max_tick = max(max_tick, j)
+
+        all_logical_paulis = self.get_stim_logical_paulis()
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+
+        for stabilizer_stim in stabilizers_stim:
+            sec.append("MPP", stabilizer_stim)
+
+        QUBITS_PER_STAB = 2
+        
+        for _ in range(num_rounds):
+            # Do the syndrome extraction in parallel for each stabilizer
+            idle(sec, list(range(n)), noise)
+            for j, stab in enumerate(stabilizers):
+                append_noisy_gate(sec, "RZ", 1, [n + j * QUBITS_PER_STAB], noise)
+                append_noisy_gate(sec, "RX", 1, [n + j * QUBITS_PER_STAB + 1], noise)
+                append_noisy_gate(sec, "CNOT", 2, [n + j * QUBITS_PER_STAB, n + j * QUBITS_PER_STAB + 1], noise)
+            for tick in range(1, max_tick + 1):
+                for k in range(n):
+                    idle_qubit = True
+                    for j, stab in enumerate(stabilizers):
+                        if circuit_solution[j][k] == tick:
+                            idle_qubit = False
+                            if stabilizers[j][k] == 1 and stabilizers[j][n+k] == 0:
+                                append_noisy_gate(sec, "CZ", 2, [n + j * QUBITS_PER_STAB, k], noise)
+                            elif stabilizers[j][k] == 0 and stabilizers[j][n+k] == 1:
+                                append_noisy_gate(sec, "CX", 2, [n + j * QUBITS_PER_STAB, k], noise)
+                            elif stabilizers[j][k] == 1 and stabilizers[j][n+k] == 1:
+                                append_noisy_gate(sec, "CY", 2, [n + j * QUBITS_PER_STAB, k], noise)
+                    if idle_qubit:
+                        idle(sec, [k], noise)
+            for j, stab in enumerate(stabilizers):
+                append_noisy_gate(sec, "MX", 1, [n + j * QUBITS_PER_STAB], noise)
+                sec.append("DETECTOR", targets=[stim.target_rec(-1), stim.target_rec(-(n + 1))])
+
+        append_observable_includes_for_paulis(circuit=sec, paulis=all_logical_paulis)
+        return sec
+    
     def bare_ancilla_sec(self, p_data, p1, p2, num_rounds=3) -> stim.Circuit:
         """
         Make a syndrome extraction circuit corresponding to the mirror code
@@ -996,9 +1176,12 @@ class MirrorCode():
         # sec = self.new_sec(p_data, p1, p2, num_rounds)
         # sec = self.smart_casual_ancilla_sec(p_data, p1, p2, num_rounds)
         # sec = self.superdense(model, p, num_rounds)
-        sec = self.fully_ft_for_css(noise_model_name, p, num_rounds)
+        # sec = self.fully_ft_for_css(noise_model_name, p, num_rounds)
         # sec = self.barely_dressed_ancilla_sec(p_data, p_meas, p1, p2, num_rounds)
         # sec = self.bare_ancilla_sec(p_data, p1, p2, num_rounds)
+
+        sec = self.shallow_bare_ancilla_sec(noise(p, noise_model_name), num_rounds)
+
         print("Done.")
         
         print("Creating detector error model...")
@@ -1076,7 +1259,7 @@ if __name__ == "__main__":
 
 
     code.benchmark(
-        noise_model_name = 'SD',
+        noise_model_name = 'SI1000',
         p = 0.001,
         num_rounds = 3,
         num_shots = 1000

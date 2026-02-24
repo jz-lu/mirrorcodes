@@ -1,6 +1,7 @@
 """
-SMT (Z3) solver for the value-assignment problem described, with a wrapper that
-relaxes the allowed value range from 1..w to 1..W for W = w, w+1, w+2, ...
+SMT (Z3) solver for the value-assignment problem described, with:
+  1) a wrapper that relaxes the allowed value range from 1..w to 1..W for W = w, w+1, ...
+  2) a cached wrapper that accepts a MirrorCode-like object and memoizes results on disk.
 
 Install:
   pip install z3-solver
@@ -16,14 +17,21 @@ Main entry points:
   - solve_with_relaxation(bits, max_extra=None, start_extra=0, verbose=True)
       * Tries W = w + start_extra, w + start_extra + 1, ...
       * Stops when a solution is found or after max_extra (if provided)
+
+  - cached_schedule(code)
+      * Calls solve_with_relaxation(code.get_stabilizers(), max_extra=6, verbose=False)
+      * Persists results under ./schedules/ keyed by stabilizer content
+      * Reuses existing cached file if stabilizers match
 """
 
 from __future__ import annotations
 
-from mirror import MirrorCode
 from collections import defaultdict
 from itertools import combinations
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+import hashlib
+import json
 
 from z3 import And, Distinct, Int, Not, Solver, Xor, sat
 
@@ -87,7 +95,7 @@ def solve_value_assignment(
     if W <= 0:
         raise ValueError("value_cap must be a positive integer (or None).")
     if W < w:
-        # It's allowed to ask for W<w, but it can never help; treat as UNSAT early.
+        # Allowed to ask for W<w, but it cannot help; treat as UNSAT early.
         return False, compressed, w, W, None
 
     # Collect sparse structure: at most w non-I per row/col.
@@ -219,30 +227,107 @@ def solve_with_relaxation(
         extra += 1
 
 
-# ------------------------- Example -------------------------
-if __name__ == "__main__":
-    # Replace this with your input. n=3 => bits is 3 x 6
-    code = MirrorCode(
-        group = [2, 2, 3, 3],
-        z0 = [[0, 0, 0, 0],
-       [0, 1, 0, 1],
-       [1, 0, 0, 2]],
-        x0 = [[0, 0, 0, 0],
-       [0, 1, 1, 0],
-       [1, 1, 2, 0]]
-    )
+# ------------------------- Disk cache wrapper -------------------------
 
-    bits = code.get_stabilizers()
-    print(bits)
+def _normalize_bits(stabilizers: Any) -> List[List[int]]:
+    """
+    Normalize various array-like inputs into list[list[int]] with 0/1 entries.
+    Intended to handle common cases like numpy arrays, tuples, etc.
+    """
+    if stabilizers is None:
+        raise ValueError("code.get_stabilizers() returned None")
 
-    ok, compressed, w, W, values = solve_with_relaxation(bits, max_extra=10, verbose=True)
+    # Convert outer container to list
+    rows = stabilizers.tolist() if hasattr(stabilizers, "tolist") else stabilizers
+    rows = list(rows)
 
-    print("\nResult:")
-    print("SAT:", ok, "w:", w, "W used:", W)
-    print("Compressed:")
-    for r in compressed:
-        print(" ".join(r))
-    print("Values (None means I):")
-    if ok:
-        for r in values:
-            print(r)
+    bits: List[List[int]] = []
+    for r in rows:
+        rr = r.tolist() if hasattr(r, "tolist") else r
+        rr = list(rr)
+        bits.append([int(x) for x in rr])
+
+    # Basic validation (and ensure entries are 0/1)
+    n = len(bits)
+    if n == 0:
+        return bits
+    if any(len(r) != 2 * n for r in bits):
+        raise ValueError("Stabilizers must have shape n x (2n).")
+    for i in range(n):
+        for j in range(2 * n):
+            if bits[i][j] not in (0, 1):
+                raise ValueError("Stabilizer entries must be 0/1.")
+    return bits
+
+
+def _stabilizers_fingerprint(bits: List[List[int]]) -> str:
+    """
+    Stable content hash for the stabilizer matrix.
+    """
+    payload = json.dumps(bits, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
+def cached_schedule(code: Any):
+    """
+    Short, descriptive cached wrapper.
+
+    Accepts a MirrorCode-like object `code` and runs:
+      solve_with_relaxation(code.get_stabilizers(), max_extra=6, verbose=False)
+
+    Results are cached under ./schedules/ keyed by the stabilizer content.
+    If the same stabilizers appear again, returns the cached result instead of recomputing.
+
+    Returns:
+      (ok, compressed, w, W, values)
+    """
+    bits = _normalize_bits(code)
+    key = _stabilizers_fingerprint(bits)
+
+    schedules_dir = Path("schedules")
+    schedules_dir.mkdir(parents=True, exist_ok=True)
+
+    path = schedules_dir / f"{key}.json"
+
+    if path.exists():
+        try:
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Minimal structural validation; if it fails, we recompute.
+            if (
+                isinstance(data, dict)
+                and "ok" in data
+                and "compressed" in data
+                and "w" in data
+                and "W" in data
+                and "values" in data
+            ):
+                return (
+                    bool(data["ok"]),
+                    data["compressed"],
+                    int(data["w"]),
+                    int(data["W"]),
+                    data["values"],
+                )
+        except Exception:
+            # Fall through to recompute on any read/parse error.
+            pass
+
+    ok, compressed, w, W, values = solve_with_relaxation(bits, max_extra=6, verbose=False)
+
+    data = {
+        "ok": ok,
+        "compressed": compressed,
+        "w": w,
+        "W": W,
+        "values": values,
+        "stabilizers": bits,  # stored for debugging / collision resistance
+    }
+
+    # Atomic-ish write: write temp then replace.
+    tmp = path.with_suffix(".json.tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+    tmp.replace(path)
+
+    return ok, compressed, w, W, values

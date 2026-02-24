@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import stim
 import multiprocessing
-import tesseract_decoder
-import tesseract_decoder.tesseract as tesseract
+#import tesseract_decoder
+#import tesseract_decoder.tesseract as tesseract
 import time
 
 
@@ -23,6 +23,7 @@ def noise(p = 0.001, name = 'SD'):
             'p_init': p,
             'p_meas': p,
             'p_idle': p,
+            'p_res_idle': p,
         }
     else:
         return {
