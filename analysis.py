@@ -30,6 +30,10 @@ def make_sec_from_code(mirror_code, circuit_name, noise_model_name, p, num_round
                               p=p,
                               num_rounds=num_rounds
                               )
+    elif circuit_name == 'pheno':
+        return mirror_code.generic_sec(p_depol=p, 
+                                       p_meas=p, 
+                                       num_rounds=num_rounds)
     else:
         raise ValueError(f"Circuit name '{circuit_name}' not yet implemented.")
 
@@ -109,7 +113,7 @@ if __name__ == '__main__':
     parser.add_argument('--run', '-r', type=int, help='Thread index', default=0)
     parser.add_argument('--filepath', '-p', type=str, help='Mirror code pickle file list', default='./codes.pkl')
     parser.add_argument("--circuit", '-c' type=str, help="Choice of syndrome extraction circuit", \
-                        choices=['superdense', 'bare', 'barely_dressed', 'css'], default='superdense')
+                        choices=['superdense', 'bare', 'barely_dressed', 'css', 'pheno'], default='superdense')
     parser.add_argument("--model", '-m' type=str, help="Noise model name", default='SI1000')
     parser.add_argument("--shots", '-s' type=int, help="Number of shots", default=100000)
     parser.add_argument("--upper", '-u' type=int, help="Noise rate exponent upper bound", default=-2)

@@ -29,7 +29,7 @@ from util import find_strides, index_to_array, partitions
 # Global time limit (per *call* to find_all_codes)
 # ============================================================
 
-TIME_LIMIT_SECONDS = 18000
+TIME_LIMIT_SECONDS = 36000
 
 
 def _elapsed(start_time: float) -> float:
