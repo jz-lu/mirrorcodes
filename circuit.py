@@ -22,6 +22,8 @@ Main entry points:
       * Calls solve_with_relaxation(code.get_stabilizers(), max_extra=6, verbose=False)
       * Persists results under ./schedules/ keyed by stabilizer content
       * Reuses existing cached file if stabilizers match
+
+This file written by ChatGPT-5.2 under guidance of ABK.
 """
 
 from __future__ import annotations

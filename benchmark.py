@@ -1,7 +1,8 @@
 """
 `benchmark.py`
-Code file with class to numerically study the performance of a general stabilizer code.
+Numerically study the performance of a general stabilizer code.
 The code does not have to be CSS.
+This has nothing specifically to do with mirror codes!
 """
 from util import binary_rank, symp2Pauli, stimify_symplectic
 from itertools import product
@@ -9,14 +10,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 import stim
 import multiprocessing
-#import tesseract_decoder
-#import tesseract_decoder.tesseract as tesseract
+import tesseract_decoder
+import tesseract_decoder.tesseract as tesseract
 import time
 
 
-#https://arxiv.org/pdf/2108.10457
+# Models are based on the specs provided by
+# https://arxiv.org/pdf/2108.10457
 def noise(p = 0.001, name = 'SD'):
-    if name == 'SD':
+    if name == 'SD': # "SD6" model
         return {
             'p2': p,
             'p1': p,
@@ -25,7 +27,7 @@ def noise(p = 0.001, name = 'SD'):
             'p_idle': p,
             'p_res_idle': p,
         }
-    else:
+    else: # "SI1000" model
         return {
             'p2': p,
             'p1': p / 10,
