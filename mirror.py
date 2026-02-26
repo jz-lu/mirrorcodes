@@ -16,7 +16,7 @@ import numpy as np
 from circuit import cached_schedule
 from util import find_isos, find_strides, shift_X
 from util import binary_rank, symp2Pauli, stimify_symplectic
-from benchmark import noise
+from benchmark import make_noise_model
 from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
@@ -258,14 +258,8 @@ class PushCircuit:
 
     def gate_round(self, gate, targets_list, noiseless=False, tick_after=True):
         """
-        This is the most direct function one should use to interact with the class.
-        The idea is that you split your syndrome extraction into time slices, where in each time slice
-        each qubit can only have at most one gate acting on it. `gate_round` lets you be even a bit more fine grained
-        than this: within *each* slice of time, you split into each type of gate, and specify which they act on.
-        For example, if I want to act on qubits 5, 7, 8 with a Pauli X and act on qubits 4 and 6 with a Pauli Z, I would
-        want to call `gate_round` twice, once on X targeting qubits 5, 7, 8 and once on Z targeting 4, 6.
-        At the end, on the last call for that time slice, set `tick_after` to `True` so that time increments forward one step.
-        This will also add idle noise to all qubits in that time slice which did not have any gates acting on them.
+        Call this function if you want to apply a gate to every qubit in `targets_list` in each block of ancilla
+        qubits used to extract the syndrome associated with a given stabilizer.
 
         Params:
             * gate (str): description of gate, e.g. 'X'.
@@ -425,6 +419,11 @@ class MirrorCode():
         Generic unphysical SEC which works for any stabilizer code. Useful for phenomenological noise analysis,
         in which we only consider measurement errors and some depolarizing error at the beginning of every round
         of syndrome extraction.
+
+        Params:
+            * p_depol (float): depolarizing error probability per qubit at beginning of each round.
+            * p_meas (float): measurement probability error.
+            * num_rounds (int): number of rounds of syndrome extraction.
         """
         num_qubits = num_stabilizers = self.get_n()
         stabilizer_paulis = self.get_stim_tableau()
@@ -860,7 +859,7 @@ class MirrorCode():
         #sec = self.shallow_bare_ancilla_sec(noise(p, noise_model_name), num_rounds)
         #sec = self.shallow_loop_flag_sec(noise(p, noise_model_name), num_rounds)
         #sec = self.shallow_ft_for_w6_css_sec(noise(p, noise_model_name), num_rounds)
-        sec = self.shallow_ft_for_w6_sec(noise(p, noise_model_name), num_rounds)
+        sec = self.shallow_ft_for_w6_sec(make_noise_model(p, noise_model_name), num_rounds)
         ##sec = self.shallow_ft_for_w6_expensive_sec(noise(p, noise_model_name), num_rounds)
         #sec = self.shallow_superdense(noise(p, noise_model_name), num_rounds)
 

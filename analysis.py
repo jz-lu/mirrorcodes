@@ -5,7 +5,7 @@ Code file for computing pseudothresholds of mirror codes in parallel,
 using SLURM arrays.
 """
 from mirror import MirrorCode
-from benchmark import StabilizerCode, noise
+from benchmark import StabilizerCode, make_noise_model
 import numpy as np
 import matplotlib.pyplot as plt
 import argparse

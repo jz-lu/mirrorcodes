@@ -17,7 +17,7 @@ import time
 
 # Models are based on the specs provided by
 # https://arxiv.org/pdf/2108.10457
-def noise(p = 0.001, name = 'SD'):
+def make_noise_model(p = 0.001, name = 'SD'):
     if name == 'SD': # "SD6" model
         return {
             'p2': p,
