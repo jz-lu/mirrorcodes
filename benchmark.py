@@ -11,7 +11,7 @@ import numpy as np
 import stim
 import multiprocessing
 import time
-import sinter
+# import sinter
 
 
 # Models are based on the specs provided by

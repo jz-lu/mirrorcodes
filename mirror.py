@@ -472,7 +472,7 @@ class MirrorCode():
 
         sec = PushCircuit(noise, n, QUBITS_PER_STAB)
 
-        circuit_solution = cached_schedule(stabilizers)[4]
+        circuit_solution = cached_schedule(self)[4]
         max_tick = 0
         for i in circuit_solution:
             for j in i:
@@ -530,7 +530,7 @@ class MirrorCode():
 
         sec = PushCircuit(noise, n, QUBITS_PER_STAB)
 
-        circuit_solution = cached_schedule(stabilizers)[4]
+        circuit_solution = cached_schedule(self)[4]
         max_tick = 0
         for i in circuit_solution:
             for j in i:
@@ -597,7 +597,7 @@ class MirrorCode():
 
         sec = PushCircuit(noise, n, QUBITS_PER_STAB)
 
-        circuit_solution = cached_schedule(stabilizers)[4]
+        circuit_solution = cached_schedule(self)[4]
         max_tick = 0
         for i in circuit_solution:
             for j in i:
@@ -674,7 +674,7 @@ class MirrorCode():
 
         sec = PushCircuit(noise, n, QUBITS_PER_STAB)
 
-        circuit_solution = cached_schedule(stabilizers)[4]
+        circuit_solution = cached_schedule(self)[4]
         max_tick = 0
         for i in circuit_solution:
             for j in i:
@@ -771,7 +771,7 @@ class MirrorCode():
 
         sec = PushCircuit(noise, n, QUBITS_PER_STAB)
 
-        circuit_solution = cached_schedule(stabilizers)[4]
+        circuit_solution = cached_schedule(self)[4]
         max_tick = 0
         for i in circuit_solution:
             for j in i:
@@ -847,20 +847,12 @@ class MirrorCode():
         assert 0 <= p <= 1/2, f"Error probability {p} must be within [0, 1/2]"
 
         print("Making the syndrome extraction circuit...")
-        # sec = self.syndrome_extraction_circuit(p_data, p1, p2, num_rounds, option=1)
-        # sec = self.new_sec(p_data, p1, p2, num_rounds)
-        # sec = self.smart_casual_ancilla_sec(p_data, p1, p2, num_rounds)
-        # sec = self.superdense(model, p, num_rounds)
-        # sec = self.fully_ft_for_css(noise_model_name, p, num_rounds)
-        # sec = self.barely_dressed_ancilla_sec(p_data, p_meas, p1, p2, num_rounds)
-        # sec = self.bare_ancilla_sec(p_data, p1, p2, num_rounds)
 
-        #sec = self.shallow_bare_ancilla_sec(noise(p, noise_model_name), num_rounds)
-        #sec = self.shallow_loop_flag_sec(noise(p, noise_model_name), num_rounds)
-        #sec = self.shallow_ft_for_w6_css_sec(noise(p, noise_model_name), num_rounds)
-        sec = self.shallow_ft_for_w6_sec(make_noise_model(p, noise_model_name), num_rounds)
-        ##sec = self.shallow_ft_for_w6_expensive_sec(noise(p, noise_model_name), num_rounds)
-        #sec = self.shallow_superdense(noise(p, noise_model_name), num_rounds)
+        sec = self.bare_ancilla_sec(make_noise_model(p, noise_model_name), num_rounds)
+        #sec = self.loop_flag_sec(noise(p, noise_model_name), num_rounds)
+        #sec = self.ft_for_w6_css_sec(noise(p, noise_model_name), num_rounds)
+        #sec = self.ft_for_w6_sec(make_noise_model(p, noise_model_name), num_rounds)
+        #sec = self.superdense(noise(p, noise_model_name), num_rounds)
 
         print("Done.")
         
@@ -914,29 +906,30 @@ if __name__ == "__main__":
     # for stab in CSS_stabs[0]:
     #     print(symp2Pauli(stab, n))
 
-    code = MirrorCode(
-        group = [2, 2, 3, 3],
-        z0 = [[0, 0, 0, 0],
-       [0, 1, 0, 1],
-       [1, 0, 0, 2]],
-        x0 = [[0, 0, 0, 0],
-       [0, 1, 1, 0],
-       [1, 1, 2, 0]]
-    )
     # code = MirrorCode(
-    #     group = [2, 3, 5],
-    #     z0 = [[0, 0, 0],
-    #    [0, 0, 1],
-    #    [0, 1, 3]],
-    #     x0 = [[1, 0, 0],
-    #    [1, 0, 2],
-    #    [1, 1, 1]],
-    #    is_css = False
+    #     group = [2, 2, 3, 3],
+    #     z0 = [[0, 0, 0, 0],
+    #    [0, 1, 0, 1],
+    #    [1, 0, 0, 2]],
+    #     x0 = [[0, 0, 0, 0],
+    #    [0, 1, 1, 0],
+    #    [1, 1, 2, 0]]
     # )
-
-    # code = MirrorCode([3, 3], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
-    # code = MirrorCode([2, 2], [[0, 0], [0, 1]], [[1, 0], [1, 1]])
-
+    
+    G = [2, 2, 4, 3, 3]
+    A = [[0, 0, 0, 0, 0],
+     [0, 0, 1, 0, 1],
+     [0, 1, 0, 0, 2]]
+    B = [[1, 0, 0, 0, 0],
+     [1, 0, 1, 1, 0],
+     [1, 1, 3, 2, 0]]
+    
+    code = MirrorCode(
+        group = G,
+        z0 = A,
+        x0 = B
+    )
+    print(code)
 
     code.benchmark(
         noise_model_name = 'SI1000',
