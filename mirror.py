@@ -414,15 +414,14 @@ class MirrorCode():
     def get_rel_dist(self):
         return self.get_d() / self.get_n()
     
-    def phenomenological_sec(self, p_depol, p_meas, num_rounds):
+    def phenomenological_sec(self, noise, num_rounds=3):
         """
         Generic unphysical SEC which works for any stabilizer code. Useful for phenomenological noise analysis,
         in which we only consider measurement errors and some depolarizing error at the beginning of every round
         of syndrome extraction.
 
         Params:
-            * p_depol (float): depolarizing error probability per qubit at beginning of each round.
-            * p_meas (float): measurement probability error.
+            * noise (dict): noise object with keys 'p_depol' and 'p_meas'
             * num_rounds (int): number of rounds of syndrome extraction.
         """
         num_qubits = num_stabilizers = self.get_n()
@@ -435,8 +434,8 @@ class MirrorCode():
         circuit.append("MPP", stabilizer_paulis)
 
         for _ in range(num_rounds):
-            circuit.append("DEPOLARIZE1", targets=list(range(num_qubits)), arg=p_depol)
-            circuit.append("MPP", stabilizer_paulis, arg=p_meas)
+            circuit.append("DEPOLARIZE1", targets=list(range(num_qubits)), arg=noise['p_depol'])
+            circuit.append("MPP", stabilizer_paulis, arg=noise['p_meas'])
 
             for i in range(num_stabilizers):
                 circuit.append(

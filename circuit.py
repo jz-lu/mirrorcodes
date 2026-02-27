@@ -189,6 +189,8 @@ def solve_with_relaxation(
     """
     # Compute w once (also validates shape).
     compressed, w = compress_binary_matrix(bits)
+    w = 15
+    print(f"Starting at w = {w}, start_extra = {start_extra}")
 
     # Handle degenerate cases quickly.
     n = len(compressed)
