@@ -5,6 +5,7 @@ For now, however, a basic introduction to working with mirror codes is given in 
 
 ## Dependencies
 * `stim`: must be at least version 1.15
+* `sinter`
 * `pysat`: install with `examples` via `pip install git+https://github.com/pysathq/pysat.git`
 * `tesseract-decoder`
 

@@ -10,9 +10,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import stim
 import multiprocessing
-# import tesseract_decoder
-# import tesseract_decoder.tesseract as tesseract
-# from tesseract_decoder import make_tesseract_sinter_decoders_dict, TesseractSinterDecoder
 import time
 # import sinter
 
@@ -54,6 +51,9 @@ def benchmark(sec, num_shots = 1000, verbose=False):
                               'num_shots': number of shots total
                               'time_seconds': time it took to decode, in seconds
         """
+        import tesseract_decoder
+        import tesseract_decoder.tesseract as tesseract
+        from tesseract_decoder import make_tesseract_sinter_decoders_dict, TesseractSinterDecoder
         # Prepare tesseract decoder
         dem = sec.detector_error_model()
         tesseract_config = tesseract.TesseractConfig(
@@ -270,6 +270,9 @@ class StabilizerCode():
         Returns:
             * results (object): sinter object that contains all the results of the simulation.
         """
+        import tesseract_decoder
+        import tesseract_decoder.tesseract as tesseract
+        from tesseract_decoder import make_tesseract_sinter_decoders_dict, TesseractSinterDecoder
         tasks = []
 
         # decoders = ['tesseract', 'tesseract-long-beam', 'tesseract-short-beam']
