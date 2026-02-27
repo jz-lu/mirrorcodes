@@ -115,8 +115,8 @@ CODES = [CODE_30_8_4,
          CODE_90_8_10, 
          CODE_144_12_12]
 
-i = idx
-param = CODES[i]
+i = 0
+param = CODE_144_12_12
 
 G, A, B = param
 code = MirrorCode(group = G, z0 = A, x0 = B)
