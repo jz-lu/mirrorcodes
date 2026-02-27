@@ -8,3 +8,4 @@ core.*
 *.swp
 *.pkl
 /.vscode/
+/.ipynb_checkpoints/
