@@ -10,11 +10,11 @@ import matplotlib.pyplot as plt
 import numpy as np
 import stim
 import multiprocessing
-import tesseract_decoder
-import tesseract_decoder.tesseract as tesseract
-from tesseract_decoder import make_tesseract_sinter_decoders_dict, TesseractSinterDecoder
+# import tesseract_decoder
+# import tesseract_decoder.tesseract as tesseract
+# from tesseract_decoder import make_tesseract_sinter_decoders_dict, TesseractSinterDecoder
 import time
-import sinter
+# import sinter
 
 
 # Models are based on the specs provided by

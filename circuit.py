@@ -32,10 +32,13 @@ from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
-import hashlib
 import json
 
-from z3 import And, Distinct, Int, Not, Solver, Xor, sat
+import numpy as np
+from util import find_strides
+import itertools as it
+
+from z3 import And, Distinct, Int, Not, Solver, Xor, group, sat
 
 
 def compress_binary_matrix(bits: List[List[int]]) -> Tuple[List[List[str]], int]:
@@ -72,7 +75,7 @@ def compress_binary_matrix(bits: List[List[int]]) -> Tuple[List[List[str]], int]
 
 
 def solve_value_assignment(
-    bits: List[List[int]],
+    code,
     value_cap: Optional[int] = None,
 ):
     """
@@ -84,8 +87,30 @@ def solve_value_assignment(
 
     where values_or_none is an n x n matrix: int for non-I, None for I.
     """
+    bits = _normalize_bits(code.get_stabilizers())
     compressed, w = compress_binary_matrix(bits)
     n = len(compressed)
+
+    if code.is_CSS() and value_cap >= 2 * (code.wz + code.wx):
+        # For CSS codes, the anti-commutation structure is simple enough that
+        # we can assign values greedily without needing a full SMT solver.
+        values: List[List[Optional[int]]] = [[None for _ in range(n)] for _ in range(n)]
+        val = 1
+        strides = find_strides(code.group)
+        for i in 'ZX':
+            for j in code.z0:
+                for k, g in enumerate(it.product(*[range(a) for a in code.group])):
+                    assert compressed[k][np.mod(j + g, code.group) @ strides] != 'I'
+                    if compressed[k][np.mod(j + g, code.group) @ strides] == i:
+                        values[k][np.mod(j + g, code.group) @ strides] = val
+                val += 1
+            for j in code.x0:
+                for k, g in enumerate(it.product(*[range(a) for a in code.group])):
+                    assert compressed[k][np.mod(j - g, code.group) @ strides] != 'I'
+                    if compressed[k][np.mod(j - g, code.group) @ strides] == i:
+                        values[k][np.mod(j - g, code.group) @ strides] = val
+                val += 1
+        return True, compressed, w, 2 * (code.wz + code.wx), values
 
     # Trivial cases
     if n == 0:
@@ -168,66 +193,66 @@ def solve_value_assignment(
     return True, compressed, w, W, values
 
 
-def solve_with_relaxation(
-    bits: List[List[int]],
-    max_extra: Optional[int] = None,
-    start_extra: int = 0,
-    verbose: bool = True,
-):
-    """
-    Repeatedly try increasing caps W = w + extra until SAT is found.
+# def solve_with_relaxation(
+#     code,
+#     max_extra: Optional[int] = None,
+#     start_extra: int = 0,
+#     verbose: bool = True,
+# ):
+#     """
+#     Repeatedly try increasing caps W = w + extra until SAT is found.
 
-    Args:
-      max_extra: if None, loop forever until SAT; else stop after extra > max_extra
-      start_extra: start at extra = start_extra (default 0 means try W=w first)
-      verbose: print status lines each iteration
+#     Args:
+#       max_extra: if None, loop forever until SAT; else stop after extra > max_extra
+#       start_extra: start at extra = start_extra (default 0 means try W=w first)
+#       verbose: print status lines each iteration
 
-    Returns:
-      Same tuple as solve_value_assignment: (True, compressed, w, W, values)
-      or, if max_extra is set and no solution is found up to it:
-        (False, compressed, w, W_last_tried, None)
-    """
-    # Compute w once (also validates shape).
-    compressed, w = compress_binary_matrix(bits)
+#     Returns:
+#       Same tuple as solve_value_assignment: (True, compressed, w, W, values)
+#       or, if max_extra is set and no solution is found up to it:
+#         (False, compressed, w, W_last_tried, None)
+#     """
+#     # Compute w once (also validates shape).
+#     bits = _normalize_bits(code.get_stabilizers())
+#     compressed, w = compress_binary_matrix(bits)
 
-    # Handle degenerate cases quickly.
-    n = len(compressed)
-    if n == 0:
-        if verbose:
-            print("[relax] n=0: vacuously SAT")
-        return True, compressed, 0, 0, []
-    if w == 0:
-        if verbose:
-            print("[relax] w=0 (all I): vacuously SAT")
-        return True, compressed, 0, 0, [[None for _ in range(n)] for _ in range(n)]
+#     # Handle degenerate cases quickly.
+#     n = len(compressed)
+#     if n == 0:
+#         if verbose:
+#             print("[relax] n=0: vacuously SAT")
+#         return True, compressed, 0, 0, []
+#     if w == 0:
+#         if verbose:
+#             print("[relax] w=0 (all I): vacuously SAT")
+#         return True, compressed, 0, 0, [[None for _ in range(n)] for _ in range(n)]
 
-    extra = int(start_extra)
-    if extra < 0:
-        raise ValueError("start_extra must be >= 0.")
-    if max_extra is not None and max_extra < extra:
-        raise ValueError("max_extra must be >= start_extra (or None).")
+#     extra = int(start_extra)
+#     if extra < 0:
+#         raise ValueError("start_extra must be >= 0.")
+#     if max_extra is not None and max_extra < extra:
+#         raise ValueError("max_extra must be >= start_extra (or None).")
 
-    last_W = None
-    while True:
-        W = w + extra
-        last_W = W
-        if verbose:
-            print(f"[relax] trying value range 1..{W} (w={w}, extra={extra}) ...", flush=True)
+#     last_W = None
+#     while True:
+#         W = w + extra
+#         last_W = W
+#         if verbose:
+#             print(f"[relax] trying value range 1..{W} (w={w}, extra={extra}) ...", flush=True)
 
-        ok, _compressed2, _w2, W2, values = solve_value_assignment(bits, value_cap=W)
+#         ok, _compressed2, _w2, W2, values = solve_value_assignment(code, value_cap=W)
 
-        if ok:
-            if verbose:
-                print(f"[relax] SAT found with W={W2}")
-            return True, compressed, w, W2, values
+#         if ok:
+#             if verbose:
+#                 print(f"[relax] SAT found with W={W2}")
+#             return True, compressed, w, W2, values
 
-        if max_extra is not None and extra >= max_extra:
-            if verbose:
-                print(f"[relax] UNSAT up to W={W} (max_extra={max_extra}). Stopping.")
-            return False, compressed, w, last_W, None
+#         if max_extra is not None and extra >= max_extra:
+#             if verbose:
+#                 print(f"[relax] UNSAT up to W={W} (max_extra={max_extra}). Stopping.")
+#             return False, compressed, w, last_W, None
 
-        extra += 1
-
+#         extra += 1
 
 # ------------------------- Disk cache wrapper -------------------------
 
@@ -262,12 +287,41 @@ def _normalize_bits(stabilizers: Any) -> List[List[int]]:
     return bits
 
 
-def _stabilizers_fingerprint(bits: List[List[int]]) -> str:
+def _stabilizers_fingerprint(code) -> str:
     """
-    Stable content hash for the stabilizer matrix.
+    Generate a human-readable key suitable for use as a filename.
+
+    The old implementation returned a SHA256 hash of the stabilizer
+    matrix.  The new behaviour encodes the three defining pieces of a
+    MirrorCode-like object instead:
+
+        * ``code.group`` – a list of integers
+        * ``code.z0``   – a 2‑D array of integers
+        * ``code.x0``   – a 2‑D array of integers
+
+    These three values are JSON‑serialized and then sanitised so that the
+    resulting string contains only alphanumeric characters, hyphens,
+    underscores or dots.  That makes the cache files readable by a human
+    and still safe as filenames on most platforms.
     """
-    payload = json.dumps(bits, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-    return hashlib.sha256(payload).hexdigest()
+    # collect the required attributes; let Python raise an AttributeError
+    # if any of them is missing so that callers notice soon.
+    group = list(code.group)
+
+    def _to_list2d(arr: Any) -> List[List[int]]:
+        if hasattr(arr, "tolist"):
+            arr = arr.tolist()
+        arr = list(arr)
+        return [list(row) for row in arr]
+
+    z0 = _to_list2d(code.z0)
+    x0 = _to_list2d(code.x0)
+
+    payload = {"group": group, "z0": z0, "x0": x0}
+    s = json.dumps(payload, separators=(",", ":"), ensure_ascii=False)
+    # make filesystem friendly: keep only a small safe subgroup
+    safe = "".join(ch if (ch.isalnum() or ch in "-._") else "_" for ch in s)
+    return safe
 
 
 def cached_schedule(code: Any):
@@ -283,8 +337,10 @@ def cached_schedule(code: Any):
     Returns:
       (ok, compressed, w, W, values)
     """
-    bits = _normalize_bits(code)
-    key = _stabilizers_fingerprint(bits)
+    stabs = code.get_stabilizers()
+    bits = _normalize_bits(stabs)
+    key = _stabilizers_fingerprint(code)
+    _, best_w = compress_binary_matrix(bits)
 
     schedules_dir = Path("schedules")
     schedules_dir.mkdir(parents=True, exist_ok=True)
@@ -315,21 +371,27 @@ def cached_schedule(code: Any):
             # Fall through to recompute on any read/parse error.
             pass
 
-    ok, compressed, w, W, values = solve_with_relaxation(bits, max_extra=6, verbose=False)
+    value_cap = 16
+    while value_cap > best_w:
+        value_cap -= 1
+        ok, compressed, w, W, values = solve_value_assignment(code, value_cap=value_cap)
+        if ok:
+            data = {
+                "ok": ok,
+                "compressed": compressed,
+                "w": w,
+                "W": W,
+                "values": values,
+                "stabilizers": bits,  # stored for debugging / collision resistance
+            }
 
-    data = {
-        "ok": ok,
-        "compressed": compressed,
-        "w": w,
-        "W": W,
-        "values": values,
-        "stabilizers": bits,  # stored for debugging / collision resistance
-    }
+            # Atomic-ish write: write temp then replace.
+            tmp = path.with_suffix(".json.tmp")
+            with tmp.open("w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
+            tmp.replace(path)
+        else:
+            # No need to try smaller value_cap if this is already UNSAT.
+            break
 
-    # Atomic-ish write: write temp then replace.
-    tmp = path.with_suffix(".json.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
-    tmp.replace(path)
-
-    return ok, compressed, w, W, values
+    return data["ok"], data["compressed"], data["w"], data["W"], data["values"]
