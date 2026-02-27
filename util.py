@@ -1,7 +1,7 @@
 """
 `util.py`
 
-Code file with a bunch of simple helper functions that process and convert between
+A bunch of simple helper functions that process and convert between
 stim, Pauli string, and symplectic representations of codes.
 """
 import itertools as it

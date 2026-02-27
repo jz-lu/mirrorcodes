@@ -390,7 +390,7 @@ class MirrorCode():
     def get_d(self, verbose=False):
         if self.d is None:
             tableau = self.get_stim_tableau()
-            assert self.CSS is not None, f"You screwed up somewhere?"
+            assert self.CSS is not None, f"The guy who programmed this screwed up somewhere?"
             self.d = distance(tableau, self.CSS, verbose=verbose)
         return self.d
     
