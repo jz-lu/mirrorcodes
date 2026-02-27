@@ -33,6 +33,8 @@ from itertools import combinations
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import json
+import hashlib
+# from mirror import MirrorCode
 
 import numpy as np
 from util import find_strides
@@ -180,7 +182,16 @@ def solve_value_assignment(
 
         bs = [(var[(a, j)] > var[(b, j)]) for j in cols]
         if bs:
-            s.add(Not(Xor(*bs)))  # even parity
+            if len(bs) % 2 == 1:
+                raise ValueError("Expected even number of anti-commutations.")
+            if len(bs) == 2:
+                s.add(Not(Xor(bs[0], bs[1])))  # even parity
+            elif len(bs) == 4:
+                s.add(Not(Xor(Xor(bs[0], bs[1]), Xor(bs[2], bs[3]))))
+            elif len(bs) == 6:
+                s.add(Not(Xor(Xor(Xor(bs[0], bs[1]), Xor(bs[2], bs[3])), Xor(bs[4], bs[5]))))
+            else:
+                raise ValueError("Stabilizer overlaps too big. There are no numbers greater than 6.")
 
     if s.check() != sat:
         return False, compressed, w, W, None
@@ -192,67 +203,6 @@ def solve_value_assignment(
 
     return True, compressed, w, W, values
 
-
-# def solve_with_relaxation(
-#     code,
-#     max_extra: Optional[int] = None,
-#     start_extra: int = 0,
-#     verbose: bool = True,
-# ):
-#     """
-#     Repeatedly try increasing caps W = w + extra until SAT is found.
-
-#     Args:
-#       max_extra: if None, loop forever until SAT; else stop after extra > max_extra
-#       start_extra: start at extra = start_extra (default 0 means try W=w first)
-#       verbose: print status lines each iteration
-
-#     Returns:
-#       Same tuple as solve_value_assignment: (True, compressed, w, W, values)
-#       or, if max_extra is set and no solution is found up to it:
-#         (False, compressed, w, W_last_tried, None)
-#     """
-#     # Compute w once (also validates shape).
-#     bits = _normalize_bits(code.get_stabilizers())
-#     compressed, w = compress_binary_matrix(bits)
-
-#     # Handle degenerate cases quickly.
-#     n = len(compressed)
-#     if n == 0:
-#         if verbose:
-#             print("[relax] n=0: vacuously SAT")
-#         return True, compressed, 0, 0, []
-#     if w == 0:
-#         if verbose:
-#             print("[relax] w=0 (all I): vacuously SAT")
-#         return True, compressed, 0, 0, [[None for _ in range(n)] for _ in range(n)]
-
-#     extra = int(start_extra)
-#     if extra < 0:
-#         raise ValueError("start_extra must be >= 0.")
-#     if max_extra is not None and max_extra < extra:
-#         raise ValueError("max_extra must be >= start_extra (or None).")
-
-#     last_W = None
-#     while True:
-#         W = w + extra
-#         last_W = W
-#         if verbose:
-#             print(f"[relax] trying value range 1..{W} (w={w}, extra={extra}) ...", flush=True)
-
-#         ok, _compressed2, _w2, W2, values = solve_value_assignment(code, value_cap=W)
-
-#         if ok:
-#             if verbose:
-#                 print(f"[relax] SAT found with W={W2}")
-#             return True, compressed, w, W2, values
-
-#         if max_extra is not None and extra >= max_extra:
-#             if verbose:
-#                 print(f"[relax] UNSAT up to W={W} (max_extra={max_extra}). Stopping.")
-#             return False, compressed, w, last_W, None
-
-#         extra += 1
 
 # ------------------------- Disk cache wrapper -------------------------
 
@@ -374,6 +324,7 @@ def cached_schedule(code: Any):
     value_cap = 16
     while value_cap > best_w:
         value_cap -= 1
+        print(f"Trying w = {value_cap}")
         ok, compressed, w, W, values = solve_value_assignment(code, value_cap=value_cap)
         if ok:
             data = {
@@ -395,3 +346,21 @@ def cached_schedule(code: Any):
             break
 
     return data["ok"], data["compressed"], data["w"], data["W"], data["values"]
+
+
+if __name__ == "__main__":
+    G = (2, 3, 5)
+    A = [[0, 0, 0],
+        [0, 0, 1],
+        [0, 1, 3]]
+    B = [[1, 0, 0],
+        [1, 0, 2],
+        [1, 1, 1]]
+    CODE_30_8_4 = (G, A, B)
+
+    # code = MirrorCode(G, A, B)
+    # bits = _normalize_bits(code.get_stabilizers())
+    # payload = json.dumps(bits, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    # print(f"{hashlib.sha256(payload).hexdigest()}.json")
+    # print(f"{_stabilizers_fingerprint(code)}.json")
+
