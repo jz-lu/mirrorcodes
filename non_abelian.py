@@ -3,7 +3,8 @@ import subprocess
 import tempfile
 import pathlib
 import util
-import itertools as it
+import shutil
+import sys
 
 import ast
 import textwrap
@@ -100,7 +101,7 @@ class IndexedGroupOps:
 
         """)
 
-        out, err = _run_gap_file_via_runtime_bash(gap_code, gap_bat=self.gap_bat, timeout=self.timeout)
+        out, err = _run_gap(gap_code, gap_bat=self.gap_bat, timeout=self.timeout)
         out = out.replace(" \n ", "")
         auts: List[List[int]] = []
         for line in out.splitlines():
@@ -131,7 +132,7 @@ def build_indexed_group_ops(group_dict, timeout: int = 120):
     """
     Build inv/mul tables using GAP, with indices 0..n-1 and identity at 0.
     """
-    gap_bat = util.gap_bat()
+    gap_bat = _safe_gap_bat_path()
     if "n" in group_dict:
         n = int(group_dict["n"])
         i = int(group_dict["i"])
@@ -164,7 +165,7 @@ def build_indexed_group_ops(group_dict, timeout: int = 120):
 
     """)
 
-    out, err = _run_gap_file_via_runtime_bash(gap_code, gap_bat=gap_bat, timeout=timeout)
+    out, err = _run_gap(gap_code, gap_bat=gap_bat, timeout=timeout)
 
     inv_table = None
     mul_table: List[Optional[List[int]]] = [None] * n
@@ -214,35 +215,46 @@ def build_indexed_group_ops(group_dict, timeout: int = 120):
 
 CREATE_NO_WINDOW = 0x08000000
 
+def _safe_gap_bat_path() -> str:
+    try:
+        p = util.gap_bat()
+        return p if isinstance(p, str) else ""
+    except Exception:
+        return ""
+
+def _is_windows_gap(gap_bat: str) -> bool:
+    return bool(gap_bat) and os.path.exists(gap_bat)
+
 def win_to_cygdrive(path: str) -> str:
     p = os.path.abspath(path)
     drive = p[0].lower()
     rest = p[2:].replace("\\", "/")
     return f"/cygdrive/{drive}{rest}"
 
-def _run_gap_file_via_runtime_bash(code: str, *, gap_bat: str, timeout=120):
+def _run_gap_windows(code: str, *, gap_bat: str, timeout=120):
+    # Your existing Windows GAP bundle uses Cygwin runtime\bin\bash.exe
     gap_root = os.path.dirname(os.path.abspath(gap_bat))
     runtime_bin = os.path.join(gap_root, "runtime", "bin")
     bash_exe = os.path.join(runtime_bin, "bash.exe")
     if not os.path.exists(bash_exe):
         raise FileNotFoundError(f"Could not find bash.exe at: {bash_exe}")
 
-
     with tempfile.TemporaryDirectory() as td:
         script = pathlib.Path(td) / "script.g"
         script.write_text(code, encoding="utf-8")
         script_cyg = win_to_cygdrive(str(script))
 
-        # IMPORTANT: bypass /run-gap.sh and call gap directly
-        # bash --login -lc 'gap -q -T "<script>"'
-        bash_cmd = f'gap -q -T "{script_cyg}"'
+        # Use -q (quiet), -b (no banner), -T (no break loop on errors)
+        bash_cmd = f'gap -q -b -T "{script_cyg}"'
         cmd = [bash_exe, "--login", "-lc", bash_cmd]
 
         env = os.environ.copy()
         env["PATH"] = runtime_bin + os.pathsep + env.get("PATH", "")
 
+        # Force non-interactive behavior
         p = subprocess.run(
             cmd,
+            stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout,
@@ -256,6 +268,40 @@ def _run_gap_file_via_runtime_bash(code: str, *, gap_bat: str, timeout=120):
         raise RuntimeError(f"GAP failed (exit {p.returncode}). STDERR:\n{err}\nSTDOUT:\n{out}")
     return out, err
 
+def _run_gap_linux(code: str, *, timeout=120):
+    # Prefer GAP_EXE if provided, else find gap on PATH
+    gap_exe = os.environ.get("GAP_EXE") or shutil.which("gap")
+    if not gap_exe:
+        raise FileNotFoundError(
+            "Could not find GAP executable. On a cluster, load a module (e.g. `module load gap`), "
+            "or set env var GAP_EXE=/full/path/to/gap."
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        script = pathlib.Path(td) / "script.g"
+        script.write_text(code, encoding="utf-8")
+
+        cmd = [gap_exe, "-q", "-b", "-T", str(script)]
+
+        p = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,   # critical to avoid dropping into an interactive prompt
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout,
+        )
+
+    out = p.stdout.decode("utf-8", errors="replace")
+    err = p.stderr.decode("utf-8", errors="replace")
+    if p.returncode != 0:
+        raise RuntimeError(f"GAP failed (exit {p.returncode}). STDERR:\n{err}\nSTDOUT:\n{out}")
+    return out, err
+
+def _run_gap(code: str, *, gap_bat: str, timeout=120):
+    if _is_windows_gap(gap_bat):
+        return _run_gap_windows(code, gap_bat=gap_bat, timeout=timeout)
+    else:
+        return _run_gap_linux(code, timeout=timeout)
 
 def nonabelian_groups_of_order(n: int, timeout=120):
     gap_bat = util.gap_bat()
@@ -292,7 +338,7 @@ def nonabelian_groups_of_order(n: int, timeout=120):
         Print("DBG:END\\n");
     """)
 
-    out, err = _run_gap_file_via_runtime_bash(gap_code, gap_bat=gap_bat, timeout=timeout)
+    out, err = _run_gap(gap_code, gap_bat=gap_bat, timeout=timeout)
     if out.strip() == "":
         raise RuntimeError(f"GAP stdout empty. STDERR was:\n{err}")
 
