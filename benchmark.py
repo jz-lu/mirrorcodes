@@ -1,7 +1,8 @@
 """
 `benchmark.py`
-Code file with class to numerically study the performance of a general stabilizer code.
+Numerically study the performance of a general stabilizer code.
 The code does not have to be CSS.
+This has nothing specifically to do with mirror codes!
 """
 from util import binary_rank, symp2Pauli, stimify_symplectic
 from itertools import product
@@ -9,22 +10,28 @@ import matplotlib.pyplot as plt
 import numpy as np
 import stim
 import multiprocessing
-#import tesseract_decoder
-#import tesseract_decoder.tesseract as tesseract
 import time
+import sinter
 
 
-#https://arxiv.org/pdf/2108.10457
-def noise(p = 0.001, name = 'SD'):
-    if name == 'SD':
+# Models are based on the specs provided by
+# https://arxiv.org/pdf/2108.10457
+def make_noise_model(p = 0.001, name = 'SD'):
+    if name == 'SD': # "SD6" model
         return {
             'p2': p,
             'p1': p,
             'p_init': p,
             'p_meas': p,
             'p_idle': p,
+            'p_res_idle': p,
         }
-    else:
+    elif name == 'phenom': # phenomenological model
+        return {
+            'p_depol': p,
+            'p_meas': p/4
+        }
+    elif name == 'SI1000': # "SI1000" model
         return {
             'p2': p,
             'p1': p / 10,
@@ -33,6 +40,8 @@ def noise(p = 0.001, name = 'SD'):
             'p_idle': p / 10,
             'p_res_idle': 2 * p,
         }
+    else:
+        raise SyntaxError(f"Invalid name '{name}'")
 
 
 def benchmark(sec, num_shots = 1000, verbose=False):
@@ -49,6 +58,9 @@ def benchmark(sec, num_shots = 1000, verbose=False):
                               'num_shots': number of shots total
                               'time_seconds': time it took to decode, in seconds
         """
+        import tesseract_decoder
+        import tesseract_decoder.tesseract as tesseract
+        from tesseract_decoder import make_tesseract_sinter_decoders_dict, TesseractSinterDecoder
         # Prepare tesseract decoder
         dem = sec.detector_error_model()
         tesseract_config = tesseract.TesseractConfig(
@@ -200,8 +212,7 @@ class StabilizerCode():
         runs these asynchronously in parallel.
         
         Params:
-            * sec_maker_fn (function): function which on input (p_datas, p1s, p2s, num_rounds) returns the appropriate SEC. This function
-                                       should also accept an optional argument `phenomenological` which if true uses phenomenological noise.
+            * secs (list:stim.Circuit): list of syndrome extraction circuits.
             * rounds_choices (list:int): list of choices for number of rounds of syndrome extraction.
             * num_shots (float): number of trials.
             * phenomenological (bool): if True, the SEC will only put data errors (i.e. p_data before each round) and measurement errors.
@@ -247,6 +258,107 @@ class StabilizerCode():
             plt.savefig(save_as)
         
         return physical_error_rates, logical_error_rates
+    
+    def sinter_benchmark(self, ps, secs, 
+                           rounds_choices = [3, 5, 7], num_shots = 1000,
+                           plot=False, save_as="./result.jpeg", verbose=False,
+                           phenom=False):
+        """
+        Benchmark in parallel using the sinter package instead of an in-house solution.
+        It probably is wiser to use sinter....
+        
+        Params:
+            * secs (list:stim.Circuit): list of syndrome extraction circuits.
+            * rounds_choices (list:int): list of choices for number of rounds of syndrome extraction.
+            * num_shots (float): number of trials.
+            * plot (bool): produce a pseudothreshold plot.
+            * save_as (str): where to save the plot.
+            * verbose (bool): whether to print progress/results.
+        
+        Returns:
+            * results (object): sinter object that contains all the results of the simulation.
+        """
+        import tesseract_decoder
+        import tesseract_decoder.tesseract as tesseract
+        from tesseract_decoder import make_tesseract_sinter_decoders_dict, TesseractSinterDecoder
+        tasks = []
+
+        # decoders = ['tesseract', 'tesseract-long-beam', 'tesseract-short-beam']
+        decoders = ['tesseract']
+        decoder_dict = make_tesseract_sinter_decoders_dict()
+        # # You can also make your own custom Tesseract Decoder to-be-used with Sinter.
+        # decoders.append('custom-tesseract-decoder')
+        decoder_dict['custom-tesseract-decoder'] = TesseractSinterDecoder(
+            det_beam=10,
+            beam_climbing=True,
+            no_revisit_dets=True,
+            merge_errors=True,
+            pqlimit=1_000,
+            num_det_orders=5,
+            det_order_method=tesseract_decoder.utils.DetOrder.DetIndex,
+            seed=2384753,
+        )
+
+        for decoder in decoders:
+            for i in range(len(ps)):
+                circuit = secs[i]
+
+                for nrd in rounds_choices:
+                    tasks.append(sinter.Task(
+                        circuit=circuit,
+                        decoder=decoder,
+                        json_metadata={"p": ps[i], "decoder": decoder, "rounds": nrd},
+                    ))
+
+        print("Collecting...")
+        
+        results = sinter.collect(
+            num_workers=8,
+            tasks=tasks,
+            max_shots=num_shots,
+            decoders=decoders,
+            custom_decoders=decoder_dict,
+            print_progress=verbose,
+        )
+
+        print("Done")
+        
+        if plot:
+            plt.rcParams.update({
+                "font.family": "serif",
+                "mathtext.fontset": "cm",
+            })
+            plt.rc("font", size=12)
+            fig, ax = plt.subplots(1, 1)
+            sinter.plot_error_rate(
+                ax=ax,
+                stats=results,
+                x_func=lambda stat: stat.json_metadata['p'],
+                group_func=lambda stat: stat.json_metadata['rounds'],
+                failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'],
+            )
+            # physical_error_rates = 1 - (1 - ps)**self.num_logicals
+            ax.loglog(ps, ps, color='gray', linestyle='--')
+            # ax.set_ylim(5e-3, 5e-2)
+            ax.set_xlim(ps[0], ps[-1])
+            ax.loglog()
+            noise_type = "Phenomenological" if phenom else "Circuit" 
+            ax.set_title(f"{'' if self.name is None else ' ' + self.name} with {noise_type} Noise")
+            ax.set_xlabel("Physical error rate")
+            ax.set_ylabel("Logical error rate per round")
+            ax.grid(which='major')
+            ax.grid(which='minor')
+            ax.legend()
+            plt.tight_layout()
+            plt.savefig(save_as)
+        
+        if verbose:
+            # Print samples as CSV data.
+            print(sinter.CSV_HEADER)
+            for result in results:
+                print(result.to_csv_line())
+        
+        return results
 
     def pseudothreshold(self, rounds_choices, physical_error_rates, logical_error_rates):
         """
