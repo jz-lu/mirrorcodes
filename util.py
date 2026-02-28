@@ -8,6 +8,16 @@ import itertools as it
 import math
 import numpy as np
 import stim
+import os
+
+def gap_bat():
+    gap_bat = r"C:/Users/andsin/AppData/Local/GAP-4.15.1/gap.bat"
+    gap_root = os.path.dirname(os.path.abspath(gap_bat))
+    runtime_bin = os.path.join(gap_root, "runtime", "bin")
+    bash_exe = os.path.join(runtime_bin, "bash.exe")
+    if not os.path.exists(bash_exe):
+        gap_bat = r"C:/Program Files/GAP-4.15.1/gap.bat"
+    return gap_bat
 
 def symp2Pauli(x, n):
     """
@@ -22,6 +32,7 @@ def symp2Pauli(x, n):
     Returns:
         * length-n string over {I, X, Y, Z} where the ith character is the Pauli on the ith qubit
     """
+    Y_count = 0
     vec = []
     for i in range(n):
         char = 'I'
@@ -29,9 +40,12 @@ def symp2Pauli(x, n):
             char = 'X'
         elif x[i] == 1 and x[i+n] == 1:
             char = 'Y'
+            Y_count += 1
         elif x[i] == 1 and x[i+n] == 0:
             char = 'Z'
         vec.append(char)
+    if (Y_count // 2) % 2 == 1:
+        return '-' + ''.join(vec)
     return ''.join(vec)
 
 

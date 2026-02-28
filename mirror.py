@@ -120,6 +120,22 @@ def css_flips(group, z0, x0):
             return False, []
     return True, flips
 
+def non_abelian_stabilizers(code):
+    n = code.get_n()
+    stabs = np.zeros((n, 2 * n), dtype=np.uint8)
+    for i in range(n):
+        for j in code.z0:
+            stabs[i, code.group.mul(j, i)] = 1
+        for j in code.x0:
+            if code.symmetric:
+                stabs[i, code.group.mul(j, code.group.inv(i)) + n] = 1
+            else:
+                stabs[i, code.group.mul(code.group.inv(i), j) + n] = 1
+    comm = np.mod(stabs[:, :n] @ stabs[:, n:].T, 2)
+    return stabs if (comm == comm.T).all() else None
+
+def valid_non_abelian(code):
+    return code.get_stabilizers() is not None
 
 def find_stabilizers(group, z0, x0):
     """
@@ -344,7 +360,7 @@ class MirrorCode():
     The optional variables can be specified if they are precomputed. If they are
     not specified, they are computed by the class functions the first time they are queried.
     """
-    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None, d_est=None):
+    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None, d_est=None, abelian=True, symmetric=True):
         self.group = group
         self.z0 = np.array(z0, dtype = int)
         self.x0 = np.array(x0, dtype = int)
@@ -358,10 +374,16 @@ class MirrorCode():
         self.k = k
         self.d = d
         self.d_est = d_est
+        self.abelian = abelian
+        self.symmetric = symmetric
 
     def get_stabilizers(self):
         if self.stabilizers is None:
-            self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+            if self.abelian:
+                self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+            else:
+                self.stabilizers = non_abelian_stabilizers(self)
+                self.CSS = False
         return self.stabilizers
     
     def get_stim_tableau(self):
@@ -379,7 +401,7 @@ class MirrorCode():
     
     def get_n(self):
         if self.n is None:
-            self.n = int(np.prod(self.group))
+            self.n = int(np.prod(self.group)) if self.abelian else self.group.n
         return self.n
     
     def get_k(self):
@@ -405,7 +427,8 @@ class MirrorCode():
     
     def is_CSS(self):
         if self.CSS is None:
-            self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+            self.get_stabilizers()
+            return self.CSS
         return self.CSS
 
     def get_rate(self):
