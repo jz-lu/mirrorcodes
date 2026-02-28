@@ -32,8 +32,7 @@ from constants import get_filename, \
                       RATE_THRESHOLD, DISTANCE_THRESHOLD, \
                       DISTANCE_RATE_THRESHOLD
 from mirror import MirrorCode
-from search import find_all_codes
-from non_abelian import find_all_non_abelian_codes
+from search import find_all_codes, find_all_non_abelian_codes
 
 def stage1(n:int, Z_wt:int, X_wt:int, min_k:int = 3, abelian:bool = True):
     """

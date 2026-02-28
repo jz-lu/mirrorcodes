@@ -379,7 +379,7 @@ class MirrorCode():
         self.abelian = abelian
         self.symmetric = symmetric
         self.actualgroup = actualgroup
-        if actualgroup is None:
+        if actualgroup is None and not self.abelian:
             self.actualgroup = build_indexed_group_ops(group)
 
     def get_stabilizers(self):

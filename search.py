@@ -1140,6 +1140,8 @@ def _norm0_pair(x, y):
     return (0, x, y) if x < y else (0, y, x)
 
 def find_all_non_abelian_codes(n, wz, wx, min_k=2):
+    if n == 0:
+        return []
     groups = nonabelian_groups_of_order(n)
     result = []
 
