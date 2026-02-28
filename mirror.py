@@ -20,8 +20,8 @@ from benchmark import make_noise_model
 from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
-#import tesseract_decoder
-#import tesseract_decoder.tesseract as tesseract
+# import tesseract_decoder
+# import tesseract_decoder.tesseract as tesseract
 import time
 
 

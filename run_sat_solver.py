@@ -128,18 +128,18 @@ end = time.time()
 mins, secs = divmod(end - start, 60)
 print(f"Elapsed time: {int(mins)}m {int(secs)}s")
 
-print(f"[{i}] Loop...")
-code.loop_flag_sec(noise=make_noise_model(0.01, "SI1000"), num_rounds=1)
+# print(f"[{i}] Loop...")
+# code.loop_flag_sec(noise=make_noise_model(0.01, "SI1000"), num_rounds=1)
 
-print(f"[{i}] FT-CSS...")
-code.ft_for_w6_css_sec(noise=make_noise_model(0.01, "SI1000"), num_rounds=1)
+# print(f"[{i}] FT-CSS...")
+# code.ft_for_w6_css_sec(noise=make_noise_model(0.01, "SI1000"), num_rounds=1)
 
-print(f"[{i}] FT...")
-code.ft_for_w6_sec(noise=make_noise_model(0.01, "SI1000"), num_rounds=1)
+# print(f"[{i}] FT...")
+# code.ft_for_w6_sec(noise=make_noise_model(0.01, "SI1000"), num_rounds=1)
 
-print(f"[{i}] Superdense...")
-code.superdense_sec(noise=make_noise_model(0.01, "SI1000"), num_rounds=1)
+# print(f"[{i}] Superdense...")
+# code.superdense_sec(noise=make_noise_model(0.01, "SI1000"), num_rounds=1)
 
-print(f"[{i}] Phenomenological...")
-code.phenomenological_sec(0.01, 0.01, 1)
+# print(f"[{i}] Phenomenological...")
+# code.phenomenological_sec(0.01, 0.01, 1)
 

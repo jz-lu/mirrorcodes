@@ -174,8 +174,8 @@ if __name__ == "__main__":
 
     T_LOW = 7 # min error rate is 10^-T_LOW
     T_HIGH = 2 # max error rate is 10^-T_HIGH
-    NUM_PROBS = 8
-    NUM_SHOTS = 50_000 * round(n / 30)
+    NUM_PROBS = 10
+    NUM_SHOTS = 100_000 * round(n / 30)
 
     if PHENOM:
         T_LOW = 2
@@ -183,7 +183,7 @@ if __name__ == "__main__":
         NUM_PROBS = 20
         NUM_SHOTS = 10_000
 
-    IDENTIFIER = f"{idx}_{'phenom' if PHENOM else 'circ'}_{NAMES[idx]}_{NUM_SHOTS}s"
+    IDENTIFIER = f"{idx}_{'phenom' if PHENOM else CIRCUIT}_{NAMES[idx]}_{NUM_SHOTS}s"
 
     # Define the main parameters of the benchmarking
     ROUND_CHOICES = list(set([1, 2, d-3, d, d+3]))
