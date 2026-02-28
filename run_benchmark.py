@@ -249,7 +249,7 @@ if __name__ == "__main__":
                                 num_shots=NUM_SHOTS,
                                 plot=True,
                                 verbose=True,
-                                save_as=f"plot_{IDENTIFIER}.jpg",
+                                save_as=f"plot_{IDENTIFIER}.pdf",
                                 phenom=PHENOM
                                 )
     print("Done")
