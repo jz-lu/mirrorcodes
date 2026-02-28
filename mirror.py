@@ -492,6 +492,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
+        print("Bare...")
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         QUBITS_PER_STAB = 1
         stabilizers = self.get_stabilizers()
@@ -550,6 +551,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
+        print("Loop...")
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         QUBITS_PER_STAB = 2
         stabilizers = self.get_stabilizers()
@@ -617,6 +619,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
+        print("CSS FT...")
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         QUBITS_PER_STAB = 3
         stabilizers = self.get_stabilizers()
@@ -694,6 +697,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
+        print("FT general...")
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         QUBITS_PER_STAB = 6
         stabilizers = self.get_stabilizers()
@@ -791,6 +795,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
+        print("Superdense...")
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         QUBITS_PER_STAB = 1
         stabilizers = self.get_stabilizers()

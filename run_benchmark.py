@@ -172,7 +172,7 @@ if __name__ == "__main__":
 
     benchmarker = StabilizerCode(stabilizers, verbose=False, name=CODE_NAME)
 
-    T_LOW = 7 # min error rate is 10^-T_LOW
+    T_LOW = 6 # min error rate is 10^-T_LOW
     T_HIGH = 2 # max error rate is 10^-T_HIGH
     NUM_PROBS = 10
     NUM_SHOTS = 100_000 * round(n / 30)
@@ -249,7 +249,7 @@ if __name__ == "__main__":
                                 num_shots=NUM_SHOTS,
                                 plot=True,
                                 verbose=True,
-                                save_as=f"plot_{IDENTIFIER}.jpg",
+                                save_as=f"plot_{IDENTIFIER}.pdf",
                                 phenom=PHENOM
                                 )
     print("Done")

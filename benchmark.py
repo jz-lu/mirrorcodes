@@ -283,11 +283,11 @@ class StabilizerCode():
         from tesseract_decoder import make_tesseract_sinter_decoders_dict, TesseractSinterDecoder
         tasks = []
 
-        # decoders = ['tesseract', 'tesseract-long-beam', 'tesseract-short-beam']
-        decoders = ['tesseract']
+        decoders = ['tesseract', 'tesseract-long-beam', 'tesseract-short-beam']
+        # decoders = ['tesseract']
         decoder_dict = make_tesseract_sinter_decoders_dict()
-        # # You can also make your own custom Tesseract Decoder to-be-used with Sinter.
-        # decoders.append('custom-tesseract-decoder')
+        # You can also make your own custom Tesseract Decoder to-be-used with Sinter.
+        decoders.append('custom-tesseract-decoder')
         decoder_dict['custom-tesseract-decoder'] = TesseractSinterDecoder(
             det_beam=10,
             beam_climbing=True,
