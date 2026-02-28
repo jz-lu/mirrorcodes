@@ -157,10 +157,10 @@ def find_stabilizers(group, z0, x0):
         stabilizers[i, np.mod(z0 + g, group) @ strides] = 1
         stabilizers[i, np.mod(x0 - g, group) @ strides + n] = 1
 
-    # if can_flip:
-    #     for g in flips:
-    #         index = g @ strides
-    #         stabilizers[:, [index, index + n]] = stabilizers[:, [index + n, index]]
+    if can_flip:
+        for g in flips:
+            index = g @ strides
+            stabilizers[:, [index, index + n]] = stabilizers[:, [index + n, index]]
     return stabilizers, can_flip
 
 

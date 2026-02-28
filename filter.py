@@ -130,8 +130,9 @@ def stage3(n:int, codes:list, t:int = 3, verbose:bool = False, estimate:bool = F
         
         goodness = k * d / n
         goodness_str = f" (GR = {round(goodness, 4)})" if d > 0 else ""
-        if d == -1 or (d >= DISTANCE_THRESHOLD
-                       and goodness >= DISTANCE_RATE_THRESHOLD):
+        if d == -1 or (d >= DISTANCE_THRESHOLD - 0.5
+                       and (goodness >= DISTANCE_RATE_THRESHOLD
+                            or (len(z0) == 2 and len(x0) == 2))):
             if verbose and (k, d, is_css) not in seen:
                 # Only print codes with genuinely new parameters.
                 print(f"[[{n}, {k}, {d}]]{goodness_str} {'' if is_css else 'non-'}CSS code found")
