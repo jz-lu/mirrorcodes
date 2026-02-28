@@ -661,16 +661,18 @@ def find_all_non_abelian_codes(n, wz, wx, min_k=2):
                                     break
 
                 if bsym:
-                    code = MirrorCode_(group, list(aset), list(bset), abelian=False, symmetric=True)
+                    code = MirrorCode_((group.n, group.i, group.description),
+                                       list(aset), list(bset), abelian=False, symmetric=True)
                     if valid_non_abelian_(code) and code.get_k() >= min_k:
                         result.append(code)
 
                 if basm:
-                    code = MirrorCode_(group, list(aset), list(bset), abelian=False, symmetric=False)
+                    code = MirrorCode_((group.n, group.i, group.description),
+                                       list(aset), list(bset), abelian=False, symmetric=False)
                     if valid_non_abelian_(code) and code.get_k() >= min_k:
                         result.append(code)
 
-    return result
+    return [(code.group, code.z0, code.x0, code.symmetric, code.get_k()) for code in result]
 
 if __name__ == "__main__":
     # for i in range(1, 25):

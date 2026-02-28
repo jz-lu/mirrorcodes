@@ -33,8 +33,9 @@ from constants import get_filename, \
                       DISTANCE_RATE_THRESHOLD
 from mirror import MirrorCode
 from search import find_all_codes
+from non_abelian import find_all_non_abelian_codes
 
-def stage1(n:int, Z_wt:int, X_wt:int, min_k:int = 3):
+def stage1(n:int, Z_wt:int, X_wt:int, min_k:int = 3, abelian:bool = True):
     """
     Stage 1 filtering. 
 
@@ -47,10 +48,12 @@ def stage1(n:int, Z_wt:int, X_wt:int, min_k:int = 3):
     Returns:
         * list of helix codes in (group, Z_0, X_0, IS_CSS, k) form which pass stage 1,
     """
-    return find_all_codes(n, Z_wt, X_wt, min_k = min_k)
+    if abelian:
+        return find_all_codes(n, Z_wt, X_wt, min_k = min_k)
+    return find_all_non_abelian_codes(n, Z_wt, X_wt, min_k=min_k)
 
 
-def stage2(n:int, codes:list, verbose:bool = False):
+def stage2(n:int, codes:list, verbose:bool = False, abelian:bool = True):
     """
     Stage 2 filtering. 
 
@@ -91,7 +94,7 @@ def worker(queue, code, estimate):
         queue.put(("err", e))
 
 
-def stage3(n:int, codes:list, t:int = 3, verbose:bool = False, estimate:bool = False):
+def stage3(n:int, codes:list, t:int = 3, verbose:bool = False, estimate:bool = False, abelian:bool = True):
     """
     Stage 3 filtering. 
 
@@ -109,8 +112,13 @@ def stage3(n:int, codes:list, t:int = 3, verbose:bool = False, estimate:bool = F
     passing_codes = []
     seen = set()
     for code_data in codes:
-        group, z0, x0, is_css, k = code_data
-        code = MirrorCode(group, z0, x0, n = n, k = k, is_css = is_css)
+        if abelian:
+            group, z0, x0, is_css, k = code_data
+            code = MirrorCode(group, z0, x0, n = n, k = k, is_css = is_css, abelian=True)
+        else:
+            group, z0, x0, symmetric, k = code_data
+            code = MirrorCode(group, z0, x0, n = n, k = k, symmetric=symmetric, abelian=False)
+        
         d = -1
         
         queue = mp.Queue()
@@ -121,7 +129,10 @@ def stage3(n:int, codes:list, t:int = 3, verbose:bool = False, estimate:bool = F
             process.terminate()
             process.join()
             if verbose:
-                print(f"Distance calculation timed out at {t}s for {'' if is_css else 'non-'}CSS [[{n}, {k}]] code\ngroup =\n{group}\nz0 =\n{z0}\nx0 =\n{x0}")
+                if abelian:
+                    print(f"Distance calculation timed out at {t}s for {'' if is_css else 'non-'}CSS [[{n}, {k}]] code\ngroup =\n{group}\nz0 =\n{z0}\nx0 =\n{x0}")
+                else:
+                    print(f"Distance calculation timed out at {t}s for {'' if symmetric else 'a'}symmetric non-abelian [[{n}, {k}]] code\ngroup =\n{group}\nz0 =\n{z0}\nx0 =\n{x0}")
         else:
             status, payload = queue.get()
             if status != 'ok':
@@ -132,13 +143,21 @@ def stage3(n:int, codes:list, t:int = 3, verbose:bool = False, estimate:bool = F
         goodness_str = f" (GR = {round(goodness, 4)})" if d > 0 else ""
         if d == -1 or (d >= DISTANCE_THRESHOLD
                        and goodness >= DISTANCE_RATE_THRESHOLD):
-            if verbose and (k, d, is_css) not in seen:
-                # Only print codes with genuinely new parameters.
-                print(f"[[{n}, {k}, {d}]]{goodness_str} {'' if is_css else 'non-'}CSS code found")
-                if goodness >= 0.9:
-                    print(f"*******  Someone has a bright future! *******")
-            seen.add((k, d, is_css))
-            passing_codes.append((group, z0, x0, is_css, k, d,
+            if abelian:
+                if verbose and (k, d, is_css) not in seen:
+                    # Only print codes with genuinely new parameters.
+                    print(f"[[{n}, {k}, {d}]]{goodness_str} {'' if is_css else 'non-'}CSS code found")
+                    if goodness >= 0.9:
+                        print(f"*******  Someone has a bright future! *******")
+            else:
+                if verbose and (k, d, symmetric) not in seen:
+                    # Only print codes with genuinely new parameters.
+                    print(f"[[{n}, {k}, {d}]]{goodness_str} {'' if symmetric else 'a'}symmetric non-abelian code found")
+                    if goodness >= 0.9:
+                        print(f"*******  Someone has a bright future! *******")
+
+            seen.add((k, d, is_css if abelian else symmetric))
+            passing_codes.append((group, z0, x0, is_css if abelian else symmetric, k, d,
                                   -1 if d == -1 else round(k * d / n, 5)))
         # else:
         #     if verbose:
@@ -146,7 +165,7 @@ def stage3(n:int, codes:list, t:int = 3, verbose:bool = False, estimate:bool = F
         
     return passing_codes
 
-def stage4(n:int, codes:list):
+def stage4(n:int, codes:list, abelian = True):
     # TODO
     raise Exception("Stage 4 has not been implemented yet.")
 
@@ -177,6 +196,7 @@ def main(args):
     n = args.size
     r = args.range
     width = args.width
+    abelian = not args.groupsnonabelian
     if width is None:
         width = 100
     print(f"Running: n = {n}")
@@ -184,17 +204,17 @@ def main(args):
 
     if args.fullsend:
         print("[Fullsend] Starting stage 1")
-        out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink)
+        out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink, abelian = abelian)
         print(f"Filtered to {len(out_data)} codes")
         print("[Fullsend] Starting stage 2")
-        out_data = stage2(n, out_data)
+        out_data = stage2(n, out_data, abelian = abelian)
         print(f"Filtered to {len(out_data)} codes")
         print("[Fullsend] Starting stage 3")
-        out_data = stage3(n, out_data, t = time, verbose = VERBOSE)
+        out_data = stage3(n, out_data, t = time, verbose = VERBOSE, abelian = abelian)
         print(f"Filtered to {len(out_data)} codes")
 
         if SAVE_DATA:
-            out_file = f"{out_directory}/{get_filename(3, n)}"
+            out_file = f"{out_directory}/{get_filename(3, n, abelian = abelian)}"
             with open(out_file, "wb") as f:
                 pickle.dump(out_data, f)
 
@@ -202,26 +222,26 @@ def main(args):
         for stage in str(stages):
             stage = int(stage)
             if stage == 1:
-                out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink)
+                out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink, abelian = abelian)
             else:
-                in_file = f"{in_directory}/{get_filename(stage - 1, n)}"
+                in_file = f"{in_directory}/{get_filename(stage - 1, n, abelian = abelian)}"
                 in_data = None
                 with open(in_file, "rb") as f:
                     in_data = pickle.load(f)
     
                 if stage == 2:
-                    out_data = stage2(n, in_data, verbose = VERBOSE)
+                    out_data = stage2(n, in_data, verbose = VERBOSE, abelian = abelian)
                 elif stage == 3:
                     if r is not None:
                         start = min(width * r, len(in_data))
                         end = min(width * (r + 1), len(in_data))
                         in_data = in_data[start : end]
-                    out_data = stage3(n, in_data, t = time, verbose = VERBOSE, estimate=est)
+                    out_data = stage3(n, in_data, t = time, verbose = VERBOSE, estimate=est, abelian = abelian)
                 elif stage == 4:
-                    out_data = stage4(n, in_data)
+                    out_data = stage4(n, in_data, abelian = abelian)
             
             if SAVE_DATA:
-                out_file = f"{out_directory}/{get_filename(stage, n, r)}"
+                out_file = f"{out_directory}/{get_filename(stage, n, r, abelian = abelian)}"
                 with open(out_file, "wb") as f:
                     pickle.dump(out_data, f)
     
@@ -286,6 +306,12 @@ if __name__ == "__main__":
         "--fullsend", "-f",
         action="store_true",
         help="Run stages 1-3 all at once (don't do this for large n)"
+    )
+
+    parser.add_argument(
+        "--groupsnonabelian", "-g"
+        action="store_true",
+        help="Search for non-abelian groups"
     )
 
     parser.add_argument(

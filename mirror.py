@@ -14,12 +14,12 @@ The tableau is NOT in reduced form---there are dependent stabilizers! (E.g. thin
 import itertools as it
 import numpy as np
 from circuit import cached_schedule
-from util import find_isos, find_strides, shift_X
-from util import binary_rank, symp2Pauli, stimify_symplectic
+from util import find_strides
+from util import binary_rank, stimify_symplectic
 from benchmark import make_noise_model
-from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
+from non_abelian import build_indexed_group_ops
 # import tesseract_decoder
 # import tesseract_decoder.tesseract as tesseract
 import time
@@ -121,16 +121,17 @@ def css_flips(group, z0, x0):
     return True, flips
 
 def non_abelian_stabilizers(code):
+    g = code.actualgroup
     n = code.get_n()
     stabs = np.zeros((n, 2 * n), dtype=np.uint8)
     for i in range(n):
         for j in code.z0:
-            stabs[i, code.group.mul(j, i)] = 1
+            stabs[i, g.mul(j, i)] = 1
         for j in code.x0:
             if code.symmetric:
-                stabs[i, code.group.mul(j, code.group.inv(i)) + n] = 1
+                stabs[i, g.mul(j, g.inv(i)) + n] = 1
             else:
-                stabs[i, code.group.mul(code.group.inv(i), j) + n] = 1
+                stabs[i, g.mul(g.inv(i), j) + n] = 1
     comm = np.mod(stabs[:, :n] @ stabs[:, n:].T, 2)
     return stabs if (comm == comm.T).all() else None
 
@@ -376,6 +377,9 @@ class MirrorCode():
         self.d_est = d_est
         self.abelian = abelian
         self.symmetric = symmetric
+        self.actualgroup = None
+        if not abelian:
+            self.actualgroup = build_indexed_group_ops(group)
 
     def get_stabilizers(self):
         if self.stabilizers is None:
@@ -401,7 +405,7 @@ class MirrorCode():
     
     def get_n(self):
         if self.n is None:
-            self.n = int(np.prod(self.group)) if self.abelian else self.group.n
+            self.n = int(np.prod(self.group)) if self.abelian else self.actualgroup.n
         return self.n
     
     def get_k(self):
