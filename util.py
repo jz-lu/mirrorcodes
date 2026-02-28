@@ -10,6 +10,207 @@ import numpy as np
 import stim
 import os
 
+# ---------- GF(2) linear algebra helpers ----------
+
+def _gf2_rref(A: np.ndarray):
+    """RREF of A over GF(2). Returns (R, pivot_cols)."""
+    A = (A.copy() & 1).astype(np.uint8)
+    n_rows, n_cols = A.shape
+    pivots = []
+    r = 0
+    for c in range(n_cols):
+        pivot = None
+        for rr in range(r, n_rows):
+            if A[rr, c]:
+                pivot = rr
+                break
+        if pivot is None:
+            continue
+        if pivot != r:
+            A[[r, pivot]] = A[[pivot, r]]
+        for rr in range(n_rows):
+            if rr != r and A[rr, c]:
+                A[rr] ^= A[r]
+        pivots.append(c)
+        r += 1
+        if r == n_rows:
+            break
+    return A, pivots
+
+
+def _gf2_nullspace(A: np.ndarray) -> np.ndarray:
+    """
+    Basis for nullspace of A over GF(2) as a (k, n_cols) uint8 array.
+    Solves A x = 0.
+    """
+    R, pivots = _gf2_rref(A)
+    n_rows, n_cols = R.shape
+    pivot_set = set(pivots)
+    free_cols = [c for c in range(n_cols) if c not in pivot_set]
+
+    basis = []
+    for f in free_cols:
+        v = np.zeros(n_cols, dtype=np.uint8)
+        v[f] = 1
+        # pivot var equals the coefficient in the pivot row (since RHS=0)
+        for i, pc in enumerate(pivots):
+            if R[i, f]:
+                v[pc] = 1
+        basis.append(v)
+
+    return np.zeros((0, n_cols), dtype=np.uint8) if not basis else np.stack(basis, axis=0)
+
+
+def _gf2_solve(A: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """
+    Solve A x = b over GF(2) for one solution x (free vars set to 0).
+    Raises ValueError if inconsistent.
+    """
+    A = (A.copy() & 1).astype(np.uint8)
+    b = (b.copy() & 1).astype(np.uint8)
+    k, m = A.shape
+    aug = np.concatenate([A, b.reshape(-1, 1)], axis=1)
+
+    pivots = []
+    r = 0
+    for c in range(m):
+        pivot = None
+        for rr in range(r, k):
+            if aug[rr, c]:
+                pivot = rr
+                break
+        if pivot is None:
+            continue
+        if pivot != r:
+            aug[[r, pivot]] = aug[[pivot, r]]
+        for rr in range(k):
+            if rr != r and aug[rr, c]:
+                aug[rr] ^= aug[r]
+        pivots.append(c)
+        r += 1
+        if r == k:
+            break
+
+    # inconsistency: 0 = 1 row
+    for rr in range(k):
+        if aug[rr, :m].sum() == 0 and aug[rr, m]:
+            raise ValueError("No GF(2) solution: sign constraints are inconsistent.")
+
+    x = np.zeros(m, dtype=np.uint8)
+    # in RREF with free vars = 0, pivot vars equal RHS
+    for i, pc in enumerate(pivots):
+        x[pc] = aug[i, m]
+    return x
+
+
+# ---------- Pauli phase computation (canonical Y convention) ----------
+
+def _check_commuting(z: np.ndarray, x: np.ndarray) -> bool:
+    # symplectic commutator: (z x^T + x z^T) mod 2 must be 0
+    comm = (z @ x.T + x @ z.T) & 1
+    return bool(np.all(comm == 0))
+
+
+def _product_phase_for_subset(
+    z: np.ndarray,
+    x: np.ndarray,
+    subset: np.ndarray,
+    sign_bits: np.ndarray | None = None,
+):
+    """
+    Multiply the chosen generators (subset[i]=1).
+
+    Representation used:
+      generator i corresponds to  i^{p_i} X^{x_i} Z^{z_i}
+      with canonical p_i = (z_i · x_i) mod 4  (this makes overlaps into Y's),
+      and an extra -1 sign flip adds +2 mod 4.
+
+    Returns (z_acc, x_acc, p_acc mod 4).
+    """
+    m, n = z.shape
+    subset = (subset & 1).astype(np.uint8)
+    if sign_bits is None:
+        sign_bits = np.zeros(m, dtype=np.uint8)
+    sign_bits = (sign_bits & 1).astype(np.uint8)
+
+    p_acc = 0
+    z_acc = np.zeros(n, dtype=np.uint8)
+    x_acc = np.zeros(n, dtype=np.uint8)
+
+    for i in np.nonzero(subset)[0]:
+        p_i = (int((z[i] & x[i]).sum()) % 4 + 2 * int(sign_bits[i])) % 4
+        # multiplying current (X^x_acc Z^z_acc) by (X^x_i Z^z_i)
+        # contributes (-1)^{z_acc · x_i} = i^{2*(z_acc·x_i mod2)} to the phase.
+        comm_parity = int((z_acc & x[i]).sum()) & 1
+        p_acc = (p_acc + p_i + 2 * comm_parity) % 4
+        z_acc ^= z[i]
+        x_acc ^= x[i]
+
+    return z_acc, x_acc, p_acc
+
+
+# ---------- Main function ----------
+
+def sign_corrections_symplectic(H: np.ndarray) -> np.ndarray:
+    """
+    Input:
+      H: (m x 2n) binary matrix in symplectic form [Z | X]
+         (Z columns first, then X columns).
+
+    Output:
+      f: length-m binary vector.
+         If f[i]=1, multiply stabilizer i by -1 (flip its sign) to eliminate any -I
+         produced by linear relations among the rows (under the canonical Y convention).
+
+    Notes:
+      - Assumes the rows mutually commute (raises ValueError otherwise).
+      - Assumes the current signs are all +1; if you have existing sign bits s,
+        you would use: s_corrected = s XOR f.
+    """
+    H = (np.array(H, dtype=np.uint8) & 1)
+    if H.ndim != 2 or (H.shape[1] % 2) != 0:
+        raise ValueError("H must be an m x 2n binary matrix (even number of columns).")
+
+    m, two_n = H.shape
+    n = two_n // 2
+    z = H[:, :n]
+    x = H[:, n:]
+
+    if not _check_commuting(z, x):
+        raise ValueError("Rows do not mutually commute (not a stabilizer generator set).")
+
+    # Relations among generators are lambda in GF(2)^m with H^T lambda = 0
+    rel_basis = _gf2_nullspace(H.T)  # shape (k, m)
+    k = rel_basis.shape[0]
+    if k == 0:
+        return np.zeros(m, dtype=np.uint8)
+
+    # For each independent relation, detect whether the product is -I (need parity 1) or +I (parity 0)
+    r = np.zeros(k, dtype=np.uint8)
+    for j in range(k):
+        lam = rel_basis[j]
+        z_acc, x_acc, p_acc = _product_phase_for_subset(z, x, lam)
+        if z_acc.any() or x_acc.any():
+            raise RuntimeError("Internal error: relation did not cancel supports.")
+        if p_acc == 2:
+            r[j] = 1
+        elif p_acc == 0:
+            r[j] = 0
+        else:
+            raise ValueError("A cancelling relation produced ±iI (unexpected for commuting Hermitian Paulis).")
+
+    # Choose sign flips f so that every relation product becomes +I:
+    # for each relation lam:  lam · f = r   (mod 2)
+    f = _gf2_solve(rel_basis, r)
+
+    # (Optional) verify on the basis relations
+    for j in range(k):
+        _, _, p_acc = _product_phase_for_subset(z, x, rel_basis[j], sign_bits=f)
+        if p_acc != 0:
+            raise RuntimeError("Verification failed: sign correction did not fix all basis relations.")
+
+    return f
+
 def gap_bat():
     gap_bat = r"C:/Users/andsin/AppData/Local/GAP-4.15.1/gap.bat"
     gap_root = os.path.dirname(os.path.abspath(gap_bat))
@@ -19,7 +220,7 @@ def gap_bat():
         gap_bat = r"C:/Program Files/GAP-4.15.1/gap.bat"
     return gap_bat
 
-def symp2Pauli(x, n):
+def symp2Pauli(x, n, positive=True):
     """
     Return a sign-free Pauli string representation of the length 2`n` symplectic vector `x`.
 
@@ -44,9 +245,7 @@ def symp2Pauli(x, n):
         elif x[i] == 1 and x[i+n] == 0:
             char = 'Z'
         vec.append(char)
-    if (Y_count // 2) % 2 == 1:
-        return '-' + ''.join(vec)
-    return ''.join(vec)
+    return ('' if positive else '-') + ''.join(vec)
 
 
 def stimify_stabs(stabs):
@@ -62,7 +261,8 @@ def stimify_symplectic(stabs):
     """
     assert len(stabs[0]) % 2 == 0 and len(stabs[0]) > 0
     n = len(stabs[0]) // 2
-    stabs = [symp2Pauli(vec, n) for vec in stabs]
+    signs = sign_corrections_symplectic(stabs)
+    stabs = [symp2Pauli(vec, n, positive=(sign == 0)) for vec, sign in zip(stabs, signs)]
     return stimify_stabs(stabs)
 
 
@@ -160,4 +360,3 @@ def binary_rank(A):
         if r == m:
             break
     return r
-
