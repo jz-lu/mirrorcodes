@@ -14,12 +14,12 @@ The tableau is NOT in reduced form---there are dependent stabilizers! (E.g. thin
 import itertools as it
 import numpy as np
 from circuit import cached_schedule
-from util import find_isos, find_strides, shift_X
-from util import binary_rank, symp2Pauli, stimify_symplectic
+from util import find_strides
+from util import binary_rank, stimify_symplectic
 from benchmark import make_noise_model
-from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
+from non_abelian import build_indexed_group_ops
 # import tesseract_decoder
 # import tesseract_decoder.tesseract as tesseract
 import time
@@ -120,6 +120,23 @@ def css_flips(group, z0, x0):
             return False, []
     return True, flips
 
+def non_abelian_stabilizers(code):
+    g = code.actualgroup
+    n = code.get_n()
+    stabs = np.zeros((n, 2 * n), dtype=np.uint8)
+    for i in range(n):
+        for j in code.z0:
+            stabs[i, g.mul(j, i)] = 1
+        for j in code.x0:
+            if code.symmetric:
+                stabs[i, g.mul(j, g.inv(i)) + n] = 1
+            else:
+                stabs[i, g.mul(g.inv(i), j) + n] = 1
+    comm = np.mod(stabs[:, :n] @ stabs[:, n:].T, 2)
+    return stabs if (comm == comm.T).all() else None
+
+def valid_non_abelian(code):
+    return code.get_stabilizers() is not None
 
 def find_stabilizers(group, z0, x0):
     """
@@ -344,7 +361,8 @@ class MirrorCode():
     The optional variables can be specified if they are precomputed. If they are
     not specified, they are computed by the class functions the first time they are queried.
     """
-    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None, d_est=None):
+    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None, d_est=None,
+                 abelian=True, symmetric=True, actualgroup=None):
         self.group = group
         self.z0 = np.array(z0, dtype = int)
         self.x0 = np.array(x0, dtype = int)
@@ -358,10 +376,19 @@ class MirrorCode():
         self.k = k
         self.d = d
         self.d_est = d_est
+        self.abelian = abelian
+        self.symmetric = symmetric
+        self.actualgroup = actualgroup
+        if actualgroup is None:
+            self.actualgroup = build_indexed_group_ops(group)
 
     def get_stabilizers(self):
         if self.stabilizers is None:
-            self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+            if self.abelian:
+                self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+            else:
+                self.stabilizers = non_abelian_stabilizers(self)
+                self.CSS = False
         return self.stabilizers
     
     def get_stim_tableau(self):
@@ -379,7 +406,7 @@ class MirrorCode():
     
     def get_n(self):
         if self.n is None:
-            self.n = int(np.prod(self.group))
+            self.n = int(np.prod(self.group)) if self.abelian else self.actualgroup.n
         return self.n
     
     def get_k(self):
@@ -405,7 +432,8 @@ class MirrorCode():
     
     def is_CSS(self):
         if self.CSS is None:
-            self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+            self.get_stabilizers()
+            return self.CSS
         return self.CSS
 
     def get_rate(self):
