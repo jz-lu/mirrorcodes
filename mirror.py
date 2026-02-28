@@ -361,7 +361,8 @@ class MirrorCode():
     The optional variables can be specified if they are precomputed. If they are
     not specified, they are computed by the class functions the first time they are queried.
     """
-    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None, d_est=None, abelian=True, symmetric=True):
+    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None, d_est=None,
+                 abelian=True, symmetric=True, actualgroup=None):
         self.group = group
         self.z0 = np.array(z0, dtype = int)
         self.x0 = np.array(x0, dtype = int)
@@ -377,8 +378,8 @@ class MirrorCode():
         self.d_est = d_est
         self.abelian = abelian
         self.symmetric = symmetric
-        self.actualgroup = None
-        if not abelian:
+        self.actualgroup = actualgroup
+        if actualgroup is None:
             self.actualgroup = build_indexed_group_ops(group)
 
     def get_stabilizers(self):

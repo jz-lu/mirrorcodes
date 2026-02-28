@@ -309,7 +309,7 @@ if __name__ == "__main__":
     )
 
     parser.add_argument(
-        "--groupsnonabelian", "-g"
+        "--groupsnonabelian", "-g",
         action="store_true",
         help="Search for non-abelian groups"
     )
