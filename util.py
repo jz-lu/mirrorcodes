@@ -35,28 +35,6 @@ def _gf2_rref(A: np.ndarray):
             break
     return A, pivots
 
-def code_connected(stabs):
-    n = len(stabs)
-    reduced, _ = _gf2_rref(np.array(stabs))
-    sum_ = reduced[:, :n] + reduced[:, n:]
-    found = np.array([False] * n)
-    found[0] = True
-    visited = set()
-    while True:
-        found_something = False
-        for i in range(n):
-            if found[i] and i not in visited:
-                found_something = True
-                visited.add(i)
-                for j in range(n):
-                    for k in range(n):
-                        if sum_[j][i] > 0 and sum_[j][k] > 0:
-                            found[k] = True
-        if not found_something:
-            break
-    return (found).all()
-
-
 def _gf2_nullspace(A: np.ndarray) -> np.ndarray:
     """
     Basis for nullspace of A over GF(2) as a (k, n_cols) uint8 array.
@@ -252,7 +230,6 @@ def symp2Pauli(x, n, positive=True):
     Returns:
         * length-n string over {I, X, Y, Z} where the ith character is the Pauli on the ith qubit
     """
-    Y_count = 0
     vec = []
     for i in range(n):
         char = 'I'
@@ -260,7 +237,6 @@ def symp2Pauli(x, n, positive=True):
             char = 'X'
         elif x[i] == 1 and x[i+n] == 1:
             char = 'Y'
-            Y_count += 1
         elif x[i] == 1 and x[i+n] == 0:
             char = 'Z'
         vec.append(char)

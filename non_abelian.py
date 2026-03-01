@@ -10,6 +10,7 @@ import ast
 import textwrap
 from dataclasses import dataclass
 from typing import Optional, List
+from functools import lru_cache
 
 @dataclass
 class IndexedGroupOps:
@@ -127,20 +128,15 @@ class IndexedGroupOps:
         self._aut_cache = auts
         return auts
 
-
+@lru_cache
 def build_indexed_group_ops(group_dict, timeout: int = 120):
     """
     Build inv/mul tables using GAP, with indices 0..n-1 and identity at 0.
     """
     gap_bat = _safe_gap_bat_path()
-    if "n" in group_dict:
-        n = int(group_dict["n"])
-        i = int(group_dict["i"])
-        desc = str(group_dict.get("description", ""))
-    else:
-        n = group_dict[0]
-        i = group_dict[1]
-        desc = group_dict[2]
+    n = group_dict[0]
+    i = group_dict[1]
+    desc = group_dict[2]
 
     gap_code = textwrap.dedent(f"""
         if LoadPackage("smallgrp") = fail then

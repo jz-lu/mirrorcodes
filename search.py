@@ -1151,7 +1151,6 @@ def find_non_abelian_codes_in_group(n, wz, wx, g, min_k=2):
     valid_non_abelian_ = valid_non_abelian
 
     group = build_indexed_group_ops(g)
-    fakegroup = (group.n, group.i, group.description)
 
     mul = group.mul_table
     inv = group.inv_table
@@ -1475,17 +1474,15 @@ def find_non_abelian_codes_in_group(n, wz, wx, g, min_k=2):
                                 break
 
             if bsym:
-                code = MirrorCode_(fakegroup, list(aset), list(bset),
+                code = MirrorCode_(g, list(aset), list(bset),
                                     abelian=False, symmetric=True, actualgroup=group)
-                if (valid_non_abelian_(code) and code.get_k() >= min_k
-                    and code_connected(code.get_stabilizers())):
+                if valid_non_abelian_(code) and code.get_k() >= min_k:
                     result.append(code)
 
             if basm:
-                code = MirrorCode_(fakegroup, list(aset), list(bset),
+                code = MirrorCode_(g, list(aset), list(bset),
                                     abelian=False, symmetric=False, actualgroup=group)
-                if (valid_non_abelian_(code) and code.get_k() >= min_k
-                    and code_connected(code.get_stabilizers())):
+                if valid_non_abelian_(code) and code.get_k() >= min_k:
                     result.append(code)
 
     return [(code.group, code.z0, code.x0, code.symmetric, code.get_k()) for code in result]
@@ -1496,7 +1493,8 @@ def find_all_non_abelian_codes(n, wz, wx, min_k=2):
     groups = nonabelian_groups_of_order(n)
     result = []
     for g in groups:
-        result += find_non_abelian_codes_in_group(n, wz, wx, g, min_k=2)
+        gr = (g['n'], g['i'], g['description'])
+        result += find_non_abelian_codes_in_group(n, wz, wx, gr, min_k=min_k)
     return result
 
 # ============================================================
