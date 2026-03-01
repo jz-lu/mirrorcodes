@@ -32,9 +32,10 @@ from constants import get_filename, \
                       RATE_THRESHOLD, DISTANCE_THRESHOLD, \
                       DISTANCE_RATE_THRESHOLD
 from mirror import MirrorCode
-from search import find_all_codes, find_all_non_abelian_codes
+from search import find_all_codes, find_all_non_abelian_codes, find_non_abelian_codes_in_group
+from non_abelian import nonabelian_groups_of_order
 
-def stage1(n:int, Z_wt:int, X_wt:int, min_k:int = 3, abelian:bool = True):
+def stage1(n:int, Z_wt:int, X_wt:int, min_k:int = 3, abelian:bool = True, group:int = -1):
     """
     Stage 1 filtering. 
 
@@ -49,7 +50,12 @@ def stage1(n:int, Z_wt:int, X_wt:int, min_k:int = 3, abelian:bool = True):
     """
     if abelian:
         return find_all_codes(n, Z_wt, X_wt, min_k = min_k)
-    return find_all_non_abelian_codes(n, Z_wt, X_wt, min_k=min_k)
+    if group == -1:
+        return find_all_non_abelian_codes(n, Z_wt, X_wt, min_k=min_k)
+    groups = nonabelian_groups_of_order(n)
+    if group < 0 or group >= len(groups):
+        return []
+    return find_non_abelian_codes_in_group(n, Z_wt, X_wt, groups[group], min_k=min_k)
 
 
 def stage2(n:int, codes:list, verbose:bool = False, abelian:bool = True):
@@ -204,7 +210,7 @@ def main(args):
 
     if args.fullsend:
         print("[Fullsend] Starting stage 1")
-        out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink, abelian = abelian)
+        out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink, abelian = abelian, group = r)
         print(f"Filtered to {len(out_data)} codes")
         print("[Fullsend] Starting stage 2")
         out_data = stage2(n, out_data, abelian = abelian)
@@ -222,7 +228,7 @@ def main(args):
         for stage in str(stages):
             stage = int(stage)
             if stage == 1:
-                out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink, abelian = abelian)
+                out_data = stage1(n, Z_wt = Z_wt, X_wt = X_wt, min_k = mink, abelian = abelian, group = r)
             else:
                 in_file = f"{in_directory}/{get_filename(stage - 1, n, abelian = abelian)}"
                 in_data = None
@@ -294,6 +300,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--range", "-r",
         type=int,
+        default = -1,
     )
 
     parser.add_argument(

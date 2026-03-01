@@ -1139,8 +1139,7 @@ def _norm0_pair(x, y):
     # canonical tuple for a 3-set known to contain identity 0: (0, min(x,y), max(x,y))
     return (0, x, y) if x < y else (0, y, x)
 
-def find_all_non_abelian_codes(n, wz, wx, min_k=2):
-    groups = nonabelian_groups_of_order(n)
+def find_non_abelian_codes_in_group(n, wz, wx, group, min_k=2):
     result = []
 
     # Precompute all B-combinations once (huge generator overhead otherwise)
@@ -1151,344 +1150,350 @@ def find_all_non_abelian_codes(n, wz, wx, min_k=2):
     MirrorCode_ = MirrorCode
     valid_non_abelian_ = valid_non_abelian
 
-    for g in groups:
-        group = build_indexed_group_ops(g)
-        fakegroup = (group.n, group.i, group.description)
+    group = build_indexed_group_ops(g)
+    fakegroup = (group.n, group.i, group.description)
 
-        mul = group.mul_table
-        inv = group.inv_table
+    mul = group.mul_table
+    inv = group.inv_table
 
-        auts = group.automorphisms()
-        Z = group.center()
-        Zinv = [inv[c] for c in Z]
+    auts = group.automorphisms()
+    Z = group.center()
+    Zinv = [inv[c] for c in Z]
 
-        # Specialize for the common case wz=3, wx=3 (your stated regime)
-        wz3 = (wz == 3)
-        wx3 = (wx == 3)
-        eqw = (wz == wx)
+    # Specialize for the common case wz=3, wx=3 (your stated regime)
+    wz3 = (wz == 3)
+    wx3 = (wx == 3)
+    eqw = (wz == wx)
 
-        # A-sets always contain 0 in your code
-        for restofa in it.combinations(range(1, n), wz - 1):
+    # A-sets always contain 0 in your code
+    for restofa in it.combinations(range(1, n), wz - 1):
+        if wz3:
+            a1, a2 = restofa
+            aset = (0, a1, a2)  # already sorted
+        else:
+            aset = tuple(sorted((0, *restofa)))
+
+        symm_viable = True
+        asym_viable = True
+
+        # For the B-loop, we can precompute stabilizers that keep A fixed
+        # under the candidate1a == aset condition.
+        symm_stabs = []  # list of (phi, cinv, u)
+        asym_stabs = []  # list of (phi, c, vinv)  (note: vinv per your code)
+
+        # When wz==wx we still need the "swap-order" candidate2 checks;
+        # precompute per-(phi,c) data that depends only on A.
+        symm_phi_c_data = []  # (phi, cinv, ac0, ac1, ac2) if wz3 else (phi, cinv, ac_list)
+        asym_phi_c_data = []  # (phi, c, cpa0, cpa1, cpa2) if wz3 else (phi, c, cpa_list)
+
+        # ---- First phase: viability of A and build stabilizers ----
+        for phi in auts:
+            if not symm_viable and not asym_viable:
+                break
+
             if wz3:
-                a1, a2 = restofa
-                aset = (0, a1, a2)  # already sorted
+                p1 = phi[a1]
+                p2 = phi[a2]
             else:
-                aset = tuple(sorted((0, *restofa)))
+                # only need phi[a] for a in aset
+                pA = [phi[a] for a in aset]
 
-            symm_viable = True
-            asym_viable = True
-
-            # For the B-loop, we can precompute stabilizers that keep A fixed
-            # under the candidate1a == aset condition.
-            symm_stabs = []  # list of (phi, cinv, u)
-            asym_stabs = []  # list of (phi, c, vinv)  (note: vinv per your code)
-
-            # When wz==wx we still need the "swap-order" candidate2 checks;
-            # precompute per-(phi,c) data that depends only on A.
-            symm_phi_c_data = []  # (phi, cinv, ac0, ac1, ac2) if wz3 else (phi, cinv, ac_list)
-            asym_phi_c_data = []  # (phi, c, cpa0, cpa1, cpa2) if wz3 else (phi, c, cpa_list)
-
-            # ---- First phase: viability of A and build stabilizers ----
-            for phi in auts:
+            for c, cinv in zip(Z, Zinv):
                 if not symm_viable and not asym_viable:
                     break
 
-                if wz3:
-                    p1 = phi[a1]
-                    p2 = phi[a2]
-                else:
-                    # only need phi[a] for a in aset
-                    pA = [phi[a] for a in aset]
+                # ---- symmetric viability (and stabilizers) ----
+                if symm_viable:
+                    if wz3:
+                        # phi_a_c = [phi[0]*c, phi[a1]*c, phi[a2]*c] = [c, p1*c, p2*c]
+                        ac0 = c
+                        ac1 = mul[p1][c]
+                        ac2 = mul[p2][c]
 
-                for c, cinv in zip(Z, Zinv):
-                    if not symm_viable and not asym_viable:
-                        break
+                        if eqw:
+                            symm_phi_c_data.append((phi, cinv, ac0, ac1, ac2))
 
-                    # ---- symmetric viability (and stabilizers) ----
-                    if symm_viable:
-                        if wz3:
-                            # phi_a_c = [phi[0]*c, phi[a1]*c, phi[a2]*c] = [c, p1*c, p2*c]
-                            ac0 = c
-                            ac1 = mul[p1][c]
-                            ac2 = mul[p2][c]
+                        # normalize by each base element (3 options)
+                        # base = ac0
+                        u = inv[ac0]
+                        x = mul[u][ac1]; y = mul[u][ac2]
+                        cand = _norm0_pair(x, y)
+                        if cand < aset:
+                            symm_viable = False
+                        elif cand == aset:
+                            symm_stabs.append((phi, cinv, u))
 
-                            if eqw:
-                                symm_phi_c_data.append((phi, cinv, ac0, ac1, ac2))
-
-                            # normalize by each base element (3 options)
-                            # base = ac0
-                            u = inv[ac0]
-                            x = mul[u][ac1]; y = mul[u][ac2]
+                        if symm_viable:
+                            # base = ac1
+                            u = inv[ac1]
+                            x = mul[u][ac0]; y = mul[u][ac2]
                             cand = _norm0_pair(x, y)
                             if cand < aset:
                                 symm_viable = False
                             elif cand == aset:
                                 symm_stabs.append((phi, cinv, u))
 
-                            if symm_viable:
-                                # base = ac1
-                                u = inv[ac1]
-                                x = mul[u][ac0]; y = mul[u][ac2]
-                                cand = _norm0_pair(x, y)
-                                if cand < aset:
-                                    symm_viable = False
-                                elif cand == aset:
-                                    symm_stabs.append((phi, cinv, u))
+                        if symm_viable:
+                            # base = ac2
+                            u = inv[ac2]
+                            x = mul[u][ac0]; y = mul[u][ac1]
+                            cand = _norm0_pair(x, y)
+                            if cand < aset:
+                                symm_viable = False
+                            elif cand == aset:
+                                symm_stabs.append((phi, cinv, u))
 
-                            if symm_viable:
-                                # base = ac2
-                                u = inv[ac2]
-                                x = mul[u][ac0]; y = mul[u][ac1]
-                                cand = _norm0_pair(x, y)
-                                if cand < aset:
-                                    symm_viable = False
-                                elif cand == aset:
-                                    symm_stabs.append((phi, cinv, u))
+                    else:
+                        # generic small-w fallback
+                        ac = [mul[p][c] for p in pA]
+                        if eqw:
+                            symm_phi_c_data.append((phi, cinv, ac))
+                        for base in ac:
+                            u = inv[base]
+                            cand = tuple(sorted(mul[u][x] for x in ac))
+                            if cand < aset:
+                                symm_viable = False
+                                break
+                            if cand == aset:
+                                symm_stabs.append((phi, cinv, u))
+                        # end generic
 
-                        else:
-                            # generic small-w fallback
-                            ac = [mul[p][c] for p in pA]
-                            if eqw:
-                                symm_phi_c_data.append((phi, cinv, ac))
-                            for base in ac:
-                                u = inv[base]
-                                cand = tuple(sorted(mul[u][x] for x in ac))
-                                if cand < aset:
-                                    symm_viable = False
-                                    break
-                                if cand == aset:
-                                    symm_stabs.append((phi, cinv, u))
-                            # end generic
+                # ---- asymmetric viability (and stabilizers) ----
+                if asym_viable:
+                    if wz3:
+                        # c_phi_a = [c*phi[0], c*phi[a1], c*phi[a2]] = [c, c*p1, c*p2]
+                        cpa0 = c
+                        cpa1 = mul[c][p1]
+                        cpa2 = mul[c][p2]
 
-                    # ---- asymmetric viability (and stabilizers) ----
-                    if asym_viable:
-                        if wz3:
-                            # c_phi_a = [c*phi[0], c*phi[a1], c*phi[a2]] = [c, c*p1, c*p2]
-                            cpa0 = c
-                            cpa1 = mul[c][p1]
-                            cpa2 = mul[c][p2]
+                        if eqw:
+                            asym_phi_c_data.append((phi, c, cpa0, cpa1, cpa2))
 
-                            if eqw:
-                                asym_phi_c_data.append((phi, c, cpa0, cpa1, cpa2))
+                        vinv = cpa0
+                        v = inv[vinv]
+                        x = mul[cpa1][v]; y = mul[cpa2][v]
+                        cand = _norm0_pair(x, y)
+                        if cand < aset:
+                            asym_viable = False
+                        elif cand == aset:
+                            asym_stabs.append((phi, c, vinv))
 
-                            vinv = cpa0
+                        if asym_viable:
+                            vinv = cpa1
                             v = inv[vinv]
-                            x = mul[cpa1][v]; y = mul[cpa2][v]
+                            x = mul[cpa0][v]; y = mul[cpa2][v]
                             cand = _norm0_pair(x, y)
                             if cand < aset:
                                 asym_viable = False
                             elif cand == aset:
                                 asym_stabs.append((phi, c, vinv))
 
-                            if asym_viable:
-                                vinv = cpa1
-                                v = inv[vinv]
-                                x = mul[cpa0][v]; y = mul[cpa2][v]
-                                cand = _norm0_pair(x, y)
-                                if cand < aset:
-                                    asym_viable = False
-                                elif cand == aset:
-                                    asym_stabs.append((phi, c, vinv))
+                        if asym_viable:
+                            vinv = cpa2
+                            v = inv[vinv]
+                            x = mul[cpa0][v]; y = mul[cpa1][v]
+                            cand = _norm0_pair(x, y)
+                            if cand < aset:
+                                asym_viable = False
+                            elif cand == aset:
+                                asym_stabs.append((phi, c, vinv))
 
-                            if asym_viable:
-                                vinv = cpa2
-                                v = inv[vinv]
-                                x = mul[cpa0][v]; y = mul[cpa1][v]
-                                cand = _norm0_pair(x, y)
-                                if cand < aset:
-                                    asym_viable = False
-                                elif cand == aset:
-                                    asym_stabs.append((phi, c, vinv))
+                    else:
+                        cpa = [mul[c][p] for p in pA]
+                        if eqw:
+                            asym_phi_c_data.append((phi, c, cpa))
+                        for vinv in cpa:
+                            v = inv[vinv]
+                            cand = tuple(sorted(mul[x][v] for x in cpa))
+                            if cand < aset:
+                                asym_viable = False
+                                break
+                            if cand == aset:
+                                asym_stabs.append((phi, c, vinv))
+                        # end generic
 
-                        else:
-                            cpa = [mul[c][p] for p in pA]
-                            if eqw:
-                                asym_phi_c_data.append((phi, c, cpa))
-                            for vinv in cpa:
-                                v = inv[vinv]
-                                cand = tuple(sorted(mul[x][v] for x in cpa))
-                                if cand < aset:
-                                    asym_viable = False
-                                    break
-                                if cand == aset:
-                                    asym_stabs.append((phi, c, vinv))
-                            # end generic
+        if not symm_viable and not asym_viable:
+            continue
 
-            if not symm_viable and not asym_viable:
+        # ---- Second phase: iterate B-sets, using stabilizers ----
+        for btuple in btuples_all:
+            # btuple is already sorted from combinations()
+            bset = btuple
+
+            bsym = symm_viable
+            basm = asym_viable
+
+            # --- symmetric B test: candidate1 checks using stabilizer list only ---
+            if bsym:
+                if wx3:
+                    b0, b1, b2 = bset
+                    for phi, cinv, u in symm_stabs:
+                        t0 = mul[u][mul[phi[b0]][cinv]]
+                        t1 = mul[u][mul[phi[b1]][cinv]]
+                        t2 = mul[u][mul[phi[b2]][cinv]]
+                        candb = _sort3(t0, t1, t2)
+                        if candb < bset:
+                            bsym = False
+                            break
+                else:
+                    for phi, cinv, u in symm_stabs:
+                        candb = tuple(sorted(mul[u][mul[phi[b]][cinv]] for b in bset))
+                        if candb < bset:
+                            bsym = False
+                            break
+
+            # --- asymmetric B test: candidate1 checks using stabilizer list only ---
+            if basm:
+                if wx3:
+                    b0, b1, b2 = bset
+                    for phi, c, vinv in asym_stabs:
+                        t0 = mul[mul[c][phi[b0]]][vinv]
+                        t1 = mul[mul[c][phi[b1]]][vinv]
+                        t2 = mul[mul[c][phi[b2]]][vinv]
+                        candb = _sort3(t0, t1, t2)
+                        if candb < bset:
+                            basm = False
+                            break
+                else:
+                    for phi, c, vinv in asym_stabs:
+                        candb = tuple(sorted(mul[mul[c][phi[b]]][vinv] for b in bset))
+                        if candb < bset:
+                            basm = False
+                            break
+
+            if not bsym and not basm:
                 continue
 
-            # ---- Second phase: iterate B-sets, using stabilizers ----
-            for btuple in btuples_all:
-                # btuple is already sorted from combinations()
-                bset = btuple
-
-                bsym = symm_viable
-                basm = asym_viable
-
-                # --- symmetric B test: candidate1 checks using stabilizer list only ---
+            # --- wz == wx “swap-order” checks (candidate2 blocks) ---
+            # These are still expensive, but we avoid recomputing A-dependent parts.
+            if eqw and (bsym or basm):
                 if bsym:
-                    if wx3:
+                    if wz3 and wx3:
                         b0, b1, b2 = bset
-                        for phi, cinv, u in symm_stabs:
-                            t0 = mul[u][mul[phi[b0]][cinv]]
-                            t1 = mul[u][mul[phi[b1]][cinv]]
-                            t2 = mul[u][mul[phi[b2]][cinv]]
-                            candb = _sort3(t0, t1, t2)
-                            if candb < bset:
-                                bsym = False
-                                break
+                        for phi, cinv, ac0, ac1, ac2 in symm_phi_c_data:
+                            tb0 = mul[phi[b0]][cinv]
+                            tb1 = mul[phi[b1]][cinv]
+                            tb2 = mul[phi[b2]][cinv]
+
+                            # base = tb0
+                            u = inv[tb0]
+                            cb = _norm0_pair(mul[u][tb1], mul[u][tb2])
+                            if cb < aset:
+                                bsym = False; break
+                            if cb == aset:
+                                ca = _sort3(mul[u][ac0], mul[u][ac1], mul[u][ac2])
+                                if ca < bset:
+                                    bsym = False; break
+
+                            # base = tb1
+                            u = inv[tb1]
+                            cb = _norm0_pair(mul[u][tb0], mul[u][tb2])
+                            if cb < aset:
+                                bsym = False; break
+                            if cb == aset:
+                                ca = _sort3(mul[u][ac0], mul[u][ac1], mul[u][ac2])
+                                if ca < bset:
+                                    bsym = False; break
+
+                            # base = tb2
+                            u = inv[tb2]
+                            cb = _norm0_pair(mul[u][tb0], mul[u][tb1])
+                            if cb < aset:
+                                bsym = False; break
+                            if cb == aset:
+                                ca = _sort3(mul[u][ac0], mul[u][ac1], mul[u][ac2])
+                                if ca < bset:
+                                    bsym = False; break
+                        # end for symm_phi_c_data
                     else:
-                        for phi, cinv, u in symm_stabs:
-                            candb = tuple(sorted(mul[u][mul[phi[b]][cinv]] for b in bset))
-                            if candb < bset:
-                                bsym = False
-                                break
-
-                # --- asymmetric B test: candidate1 checks using stabilizer list only ---
-                if basm:
-                    if wx3:
-                        b0, b1, b2 = bset
-                        for phi, c, vinv in asym_stabs:
-                            t0 = mul[mul[c][phi[b0]]][vinv]
-                            t1 = mul[mul[c][phi[b1]]][vinv]
-                            t2 = mul[mul[c][phi[b2]]][vinv]
-                            candb = _sort3(t0, t1, t2)
-                            if candb < bset:
-                                basm = False
-                                break
-                    else:
-                        for phi, c, vinv in asym_stabs:
-                            candb = tuple(sorted(mul[mul[c][phi[b]]][vinv] for b in bset))
-                            if candb < bset:
-                                basm = False
-                                break
-
-                if not bsym and not basm:
-                    continue
-
-                # --- wz == wx “swap-order” checks (candidate2 blocks) ---
-                # These are still expensive, but we avoid recomputing A-dependent parts.
-                if eqw and (bsym or basm):
-                    if bsym:
-                        if wz3 and wx3:
-                            b0, b1, b2 = bset
-                            for phi, cinv, ac0, ac1, ac2 in symm_phi_c_data:
-                                tb0 = mul[phi[b0]][cinv]
-                                tb1 = mul[phi[b1]][cinv]
-                                tb2 = mul[phi[b2]][cinv]
-
-                                # base = tb0
-                                u = inv[tb0]
-                                cb = _norm0_pair(mul[u][tb1], mul[u][tb2])
+                        # generic fallback
+                        for phi, cinv, ac in symm_phi_c_data:
+                            tb = [mul[phi[b]][cinv] for b in bset]
+                            for base in tb:
+                                u = inv[base]
+                                cb = tuple(sorted(mul[u][x] for x in tb))
                                 if cb < aset:
                                     bsym = False; break
                                 if cb == aset:
-                                    ca = _sort3(mul[u][ac0], mul[u][ac1], mul[u][ac2])
+                                    ca = tuple(sorted(mul[u][x] for x in ac))
                                     if ca < bset:
                                         bsym = False; break
-
-                                # base = tb1
-                                u = inv[tb1]
-                                cb = _norm0_pair(mul[u][tb0], mul[u][tb2])
-                                if cb < aset:
-                                    bsym = False; break
-                                if cb == aset:
-                                    ca = _sort3(mul[u][ac0], mul[u][ac1], mul[u][ac2])
-                                    if ca < bset:
-                                        bsym = False; break
-
-                                # base = tb2
-                                u = inv[tb2]
-                                cb = _norm0_pair(mul[u][tb0], mul[u][tb1])
-                                if cb < aset:
-                                    bsym = False; break
-                                if cb == aset:
-                                    ca = _sort3(mul[u][ac0], mul[u][ac1], mul[u][ac2])
-                                    if ca < bset:
-                                        bsym = False; break
-                            # end for symm_phi_c_data
-                        else:
-                            # generic fallback
-                            for phi, cinv, ac in symm_phi_c_data:
-                                tb = [mul[phi[b]][cinv] for b in bset]
-                                for base in tb:
-                                    u = inv[base]
-                                    cb = tuple(sorted(mul[u][x] for x in tb))
-                                    if cb < aset:
-                                        bsym = False; break
-                                    if cb == aset:
-                                        ca = tuple(sorted(mul[u][x] for x in ac))
-                                        if ca < bset:
-                                            bsym = False; break
-                                if not bsym:
-                                    break
-
-                    if basm:
-                        if wz3 and wx3:
-                            b0, b1, b2 = bset
-                            for phi, c, cpa0, cpa1, cpa2 in asym_phi_c_data:
-                                tb0 = mul[c][phi[b0]]
-                                tb1 = mul[c][phi[b1]]
-                                tb2 = mul[c][phi[b2]]
-
-                                # base = tb0
-                                vinv = inv[tb0]
-                                cb = _norm0_pair(mul[tb1][vinv], mul[tb2][vinv])
-                                if cb < aset:
-                                    basm = False; break
-                                if cb == aset:
-                                    ca = _sort3(mul[cpa0][tb0], mul[cpa1][tb0], mul[cpa2][tb0])
-                                    if ca < bset:
-                                        basm = False; break
-
-                                # base = tb1
-                                vinv = inv[tb1]
-                                cb = _norm0_pair(mul[tb0][vinv], mul[tb2][vinv])
-                                if cb < aset:
-                                    basm = False; break
-                                if cb == aset:
-                                    ca = _sort3(mul[cpa0][tb1], mul[cpa1][tb1], mul[cpa2][tb1])
-                                    if ca < bset:
-                                        basm = False; break
-
-                                # base = tb2
-                                vinv = inv[tb2]
-                                cb = _norm0_pair(mul[tb0][vinv], mul[tb1][vinv])
-                                if cb < aset:
-                                    basm = False; break
-                                if cb == aset:
-                                    ca = _sort3(mul[cpa0][tb2], mul[cpa1][tb2], mul[cpa2][tb2])
-                                    if ca < bset:
-                                        basm = False; break
-                            # end for asym_phi_c_data
-                        else:
-                            for phi, c, cpa in asym_phi_c_data:
-                                tb = [mul[c][phi[b]] for b in bset]
-                                for base in tb:
-                                    vinv = inv[base]
-                                    cb = tuple(sorted(mul[x][vinv] for x in tb))
-                                    if cb < aset:
-                                        basm = False; break
-                                    if cb == aset:
-                                        ca = tuple(sorted(mul[x][base] for x in cpa))
-                                        if ca < bset:
-                                            basm = False; break
-                                if not basm:
-                                    break
-
-                if bsym:
-                    code = MirrorCode_(fakegroup, list(aset), list(bset),
-                                       abelian=False, symmetric=True, actualgroup=group)
-                    if valid_non_abelian_(code) and code.get_k() >= min_k:
-                        result.append(code)
+                            if not bsym:
+                                break
 
                 if basm:
-                    code = MirrorCode_(fakegroup, list(aset), list(bset),
-                                       abelian=False, symmetric=False, actualgroup=group)
-                    if valid_non_abelian_(code) and code.get_k() >= min_k:
-                        result.append(code)
+                    if wz3 and wx3:
+                        b0, b1, b2 = bset
+                        for phi, c, cpa0, cpa1, cpa2 in asym_phi_c_data:
+                            tb0 = mul[c][phi[b0]]
+                            tb1 = mul[c][phi[b1]]
+                            tb2 = mul[c][phi[b2]]
+
+                            # base = tb0
+                            vinv = inv[tb0]
+                            cb = _norm0_pair(mul[tb1][vinv], mul[tb2][vinv])
+                            if cb < aset:
+                                basm = False; break
+                            if cb == aset:
+                                ca = _sort3(mul[cpa0][tb0], mul[cpa1][tb0], mul[cpa2][tb0])
+                                if ca < bset:
+                                    basm = False; break
+
+                            # base = tb1
+                            vinv = inv[tb1]
+                            cb = _norm0_pair(mul[tb0][vinv], mul[tb2][vinv])
+                            if cb < aset:
+                                basm = False; break
+                            if cb == aset:
+                                ca = _sort3(mul[cpa0][tb1], mul[cpa1][tb1], mul[cpa2][tb1])
+                                if ca < bset:
+                                    basm = False; break
+
+                            # base = tb2
+                            vinv = inv[tb2]
+                            cb = _norm0_pair(mul[tb0][vinv], mul[tb1][vinv])
+                            if cb < aset:
+                                basm = False; break
+                            if cb == aset:
+                                ca = _sort3(mul[cpa0][tb2], mul[cpa1][tb2], mul[cpa2][tb2])
+                                if ca < bset:
+                                    basm = False; break
+                        # end for asym_phi_c_data
+                    else:
+                        for phi, c, cpa in asym_phi_c_data:
+                            tb = [mul[c][phi[b]] for b in bset]
+                            for base in tb:
+                                vinv = inv[base]
+                                cb = tuple(sorted(mul[x][vinv] for x in tb))
+                                if cb < aset:
+                                    basm = False; break
+                                if cb == aset:
+                                    ca = tuple(sorted(mul[x][base] for x in cpa))
+                                    if ca < bset:
+                                        basm = False; break
+                            if not basm:
+                                break
+
+            if bsym:
+                code = MirrorCode_(fakegroup, list(aset), list(bset),
+                                    abelian=False, symmetric=True, actualgroup=group)
+                if valid_non_abelian_(code) and code.get_k() >= min_k:
+                    result.append(code)
+
+            if basm:
+                code = MirrorCode_(fakegroup, list(aset), list(bset),
+                                    abelian=False, symmetric=False, actualgroup=group)
+                if valid_non_abelian_(code) and code.get_k() >= min_k:
+                    result.append(code)
 
     return [(code.group, code.z0, code.x0, code.symmetric, code.get_k()) for code in result]
+
+def find_all_non_abelian_codes(n, wz, wx, min_k=2):
+    groups = nonabelian_groups_of_order(n)
+    result = []
+    for g in groups:
+        result += find_non_abelian_codes_in_group(n, wz, wx, g, min_k=2)
+    return result
 
 # ============================================================
 # 7) Main (simple test harness)
