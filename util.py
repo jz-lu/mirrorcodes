@@ -4,8 +4,6 @@
 A bunch of simple helper functions that process and convert between
 stim, Pauli string, and symplectic representations of codes.
 """
-import itertools as it
-import math
 import numpy as np
 import stim
 import os
@@ -36,6 +34,27 @@ def _gf2_rref(A: np.ndarray):
         if r == n_rows:
             break
     return A, pivots
+
+def code_connected(stabs):
+    n = len(stabs)
+    reduced, _ = _gf2_rref(np.array(stabs))
+    sum = reduced[:, :n] + reduced[:, n:]
+    found = np.array([False] * n)
+    found[0] = True
+    visited = set()
+    while True:
+        found_something = False
+        for i in range(n):
+            if found[i] and i not in visited:
+                found_something = True
+                visited.add(i)
+                for j in range(n):
+                    for k in range(n):
+                        if stabs[j][i] > 0 and stabs[j][k] > 0:
+                            found[k] = True
+        if not found_something:
+            break
+    return (found).all()
 
 
 def _gf2_nullspace(A: np.ndarray) -> np.ndarray:

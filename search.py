@@ -22,7 +22,7 @@ from isomorphism import (
     push_to_lex_minimal,
 )
 from mirror import MirrorCode, valid_non_abelian
-from util import find_strides, index_to_array, partitions
+from util import code_connected, find_strides, index_to_array, partitions
 from non_abelian import nonabelian_groups_of_order, build_indexed_group_ops
 
 
@@ -1139,7 +1139,7 @@ def _norm0_pair(x, y):
     # canonical tuple for a 3-set known to contain identity 0: (0, min(x,y), max(x,y))
     return (0, x, y) if x < y else (0, y, x)
 
-def find_non_abelian_codes_in_group(n, wz, wx, group, min_k=2):
+def find_non_abelian_codes_in_group(n, wz, wx, g, min_k=2):
     result = []
 
     # Precompute all B-combinations once (huge generator overhead otherwise)
@@ -1477,13 +1477,15 @@ def find_non_abelian_codes_in_group(n, wz, wx, group, min_k=2):
             if bsym:
                 code = MirrorCode_(fakegroup, list(aset), list(bset),
                                     abelian=False, symmetric=True, actualgroup=group)
-                if valid_non_abelian_(code) and code.get_k() >= min_k:
+                if (valid_non_abelian_(code) and code.get_k() >= min_k
+                    and code_connected(code.get_stabilizers())):
                     result.append(code)
 
             if basm:
                 code = MirrorCode_(fakegroup, list(aset), list(bset),
                                     abelian=False, symmetric=False, actualgroup=group)
-                if valid_non_abelian_(code) and code.get_k() >= min_k:
+                if (valid_non_abelian_(code) and code.get_k() >= min_k
+                    and code_connected(code.get_stabilizers())):
                     result.append(code)
 
     return [(code.group, code.z0, code.x0, code.symmetric, code.get_k()) for code in result]
