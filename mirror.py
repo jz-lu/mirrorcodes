@@ -534,6 +534,11 @@ class MirrorCode():
             sec.gate_round("MX", [0])
             for j, stab in enumerate(stabilizers):
                 sec.push_gate("DETECTOR", [stim.target_rec(-n + j), stim.target_rec(-2 * n + j)])
+        
+        for stabilizer_stim in stabilizers_stim:
+            sec.push_gate("MPP", stabilizer_stim, noiseless=True)
+        for j, stab in enumerate(stabilizers):
+            sec.push_gate("DETECTOR", [stim.target_rec(-n + j), stim.target_rec(-2 * n + j)])
 
         append_observable_includes_for_paulis(circuit=sec.circuit, paulis=all_logical_paulis)
         return sec.circuit
@@ -601,6 +606,11 @@ class MirrorCode():
                     sec.push_gate("DETECTOR", [stim.target_rec(-n * QUBITS_PER_STAB + j), stim.target_rec(-n * QUBITS_PER_STAB - n + j)])
                 else:
                     sec.push_gate("DETECTOR", [stim.target_rec(-n * QUBITS_PER_STAB + j), stim.target_rec(-2 * n * QUBITS_PER_STAB + j)])
+
+        for stabilizer_stim in stabilizers_stim:
+            sec.push_gate("MPP", stabilizer_stim, noiseless=True)
+        for j, stab in enumerate(stabilizers):
+            sec.push_gate("DETECTOR", [stim.target_rec(-n + j), stim.target_rec(-(QUBITS_PER_STAB+1) * n + j)])
 
         append_observable_includes_for_paulis(circuit=sec.circuit, paulis=all_logical_paulis)
         return sec.circuit
@@ -680,6 +690,11 @@ class MirrorCode():
                 else:
                     sec.push_gate("DETECTOR", [stim.target_rec(-3 * n + j), stim.target_rec(-6 * n + j)])
             sec.tick()
+
+        for stabilizer_stim in stabilizers_stim:
+            sec.push_gate("MPP", stabilizer_stim, noiseless=True)
+        for j, stab in enumerate(stabilizers):
+            sec.push_gate("DETECTOR", [stim.target_rec(-n + j), stim.target_rec(-4 * n + j)])
 
         append_observable_includes_for_paulis(circuit=sec.circuit, paulis=all_logical_paulis)
         return sec.circuit
@@ -776,6 +791,14 @@ class MirrorCode():
                                                stim.target_rec(-12 * n + 3 * j + 2)])
             sec.tick()
 
+        for stabilizer_stim in stabilizers_stim:
+            sec.push_gate("MPP", stabilizer_stim, noiseless=True)
+        for j, stab in enumerate(stabilizers):
+            sec.push_gate("DETECTOR", [stim.target_rec(-n + j), 
+                                       stim.target_rec(-7 * n + 3 * j),
+                                       stim.target_rec(-7 * n + 3 * j + 1),
+                                       stim.target_rec(-7 * n + 3 * j + 2)])
+
         append_observable_includes_for_paulis(circuit=sec.circuit, paulis=all_logical_paulis)
         return sec.circuit
 
@@ -857,6 +880,11 @@ class MirrorCode():
                 else:
                     sec.push_gate("DETECTOR", [stim.target_rec(-n - offset + j), stim.target_rec(-2 * n - 2 * offset + j)])
             sec.tick()
+        
+        for stabilizer_stim in stabilizers_stim:
+            sec.push_gate("MPP", stabilizer_stim, noiseless=True)
+        for j, stab in enumerate(stabilizers):
+            sec.push_gate("DETECTOR", [stim.target_rec(-n + j), stim.target_rec(-2 * n - offset + j)])
 
         append_observable_includes_for_paulis(circuit=sec.circuit, paulis=all_logical_paulis)
         return sec.circuit

@@ -2,6 +2,7 @@ import argparse
 import numpy as np
 import time
 import sinter
+import stim
 
 from benchmark import benchmark, StabilizerCode, make_noise_model
 from mirror import MirrorCode
@@ -29,7 +30,7 @@ if __name__ == "__main__":
         type=str,
         default='bare',
         help="index",
-        choices=['bare', 'loop', 'css', 'ft', 'superdense']
+        choices=['bare', 'loop', 'css', 'ft', 'superdense', 'surface']
     )
 
     args = parser.parse_args()
@@ -41,6 +42,14 @@ if __name__ == "__main__":
     Here are the codes that we will analyze.
     There are currently 9 of them.
     """
+
+    # 6x6 Toric code
+    G = (2, 6, 6)
+    A = [[0, 0, 0],
+         [0, 0, 1]]
+    B = [[1, 0, 0],
+         [1, 1, 0]]
+    CODE_TORIC = (G, A, B)
 
     # 30, 8, 4
     G = (2, 3, 5)
@@ -139,7 +148,8 @@ if __name__ == "__main__":
         [1, 1, 3, 2, 0]]
     CODE_144_12_12 = (G, A, B)
 
-    CODES = [CODE_30_8_4, 
+    CODES = [CODE_TORIC,
+            CODE_30_8_4, 
             CODE_36_6_6,
             CODE_48_8_6, 
             CODE_48_4_8, 
@@ -148,7 +158,8 @@ if __name__ == "__main__":
             CODE_85_8_9, 
             CODE_90_8_10, 
             CODE_144_12_12]
-    NAMES = ['30_8_4',
+    NAMES = ['72_2_6',
+            '30_8_4',
             '36_6_6',
             '48_8_6',
             '48_4_8',
@@ -174,8 +185,8 @@ if __name__ == "__main__":
 
     T_LOW = 6 # min error rate is 10^-T_LOW
     T_HIGH = 2 # max error rate is 10^-T_HIGH
-    NUM_PROBS = 10
-    NUM_SHOTS = 100_000 * round(n / 30)
+    NUM_PROBS = 8
+    NUM_SHOTS = 100_000
 
     if PHENOM:
         T_LOW = 2
@@ -188,12 +199,15 @@ if __name__ == "__main__":
     # Define the main parameters of the benchmarking
     ROUND_CHOICES = list(set([1, 2, d-3, d, d+3]))
     PS = np.logspace(-T_LOW, -T_HIGH, NUM_PROBS)
+    max_idle = make_noise_model(NOISE_MODEL_NAME, PS[-1])['p_idle']
+    print(f"Noise model type = {NOISE_MODEL_NAME}")
+    print(f"Max idle = {max_idle}")
 
     print("Making syndrome extraction circuits...")
     SECS = None
     if PHENOM:
         print("Syndrome extraction: phenomenological")
-        SECS = [code.phenomenological_sec(noise=make_noise_model(PS[i], NOISE_MODEL_NAME),
+        SECS = [code.phenomenological_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
                                     num_rounds=nrd
                                     )
                                     for nrd in ROUND_CHOICES
@@ -201,7 +215,7 @@ if __name__ == "__main__":
                 ]
     elif CIRCUIT == 'bare':
         print("Syndrome extraction: bare circuit")
-        SECS = [code.bare_ancilla_sec(noise=make_noise_model(PS[i], NOISE_MODEL_NAME),
+        SECS = [code.bare_ancilla_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
                                     num_rounds=nrd
                                     )
                                     for nrd in ROUND_CHOICES
@@ -209,7 +223,7 @@ if __name__ == "__main__":
                 ]
     elif CIRCUIT == 'loop':
         print("Syndrome extraction: loop circuit")
-        SECS = [code.loop_flag_sec(noise=make_noise_model(PS[i], NOISE_MODEL_NAME),
+        SECS = [code.loop_flag_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
                                     num_rounds=nrd
                                     )
                                     for nrd in ROUND_CHOICES
@@ -217,7 +231,7 @@ if __name__ == "__main__":
                 ]
     elif CIRCUIT == 'css':
         print("Syndrome extraction: CSS fault-tolerant circuit")
-        SECS = [code.ft_for_w6_css_sec(noise=make_noise_model(PS[i], NOISE_MODEL_NAME),
+        SECS = [code.ft_for_w6_css_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
                                     num_rounds=nrd
                                     )
                                     for nrd in ROUND_CHOICES
@@ -225,7 +239,7 @@ if __name__ == "__main__":
                 ]
     elif CIRCUIT == 'ft':
         print("Syndrome extraction: general fault-tolerant circuit")
-        SECS = [code.ft_for_w6_sec(noise=make_noise_model(PS[i], NOISE_MODEL_NAME),
+        SECS = [code.ft_for_w6_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
                                     num_rounds=nrd
                                     )
                                     for nrd in ROUND_CHOICES
@@ -234,12 +248,25 @@ if __name__ == "__main__":
 
     elif CIRCUIT == 'superdense':
         print("Syndrome extraction: superdense circuit")
-        SECS = [code.superdense_sec(noise=make_noise_model(PS[i], NOISE_MODEL_NAME),
+        SECS = [code.superdense_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
                                         num_rounds=nrd
                                         )
                                         for nrd in ROUND_CHOICES
                                         for i in range(len(PS))
                     ]
+    
+    elif CIRCUIT == 'surface':
+        CODE_NAME = 'Surface'
+        print("Syndrome extraction: surface code circuit")
+        SECS = [stim.Circuit.generated(
+            code_task="surface_code:rotated_memory_x",
+            distance=6,
+            rounds=nrd,
+            after_clifford_depolarization=p,
+            before_round_data_depolarization=p,
+            before_measure_flip_probability=p,
+            after_reset_flip_probability=p
+        ) for nrd in ROUND_CHOICES for p in PS]
     print("Done")
 
     print("Benchmarking...")
