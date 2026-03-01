@@ -8,8 +8,8 @@ pair_list = [(3, 3)]
 for pair in pair_list:
     z, x = pair
     codes = set()
-    counts = [[[0 for k in range(500)] for j in range(101)] for i in range(101)]
-    for i in range(301):
+    counts = [[[0 for k in range(500)] for j in range(101)] for i in range(301)]
+    for i in range(101):
         if Path(f"NAdata{z}{x}/NA_STAGE3_n{i}.pkl").is_file():
             with open(f"NAdata{z}{x}/NA_STAGE3_n{i}.pkl", "rb") as f:
                 data = pickle.load(f)
