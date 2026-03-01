@@ -356,3 +356,7 @@ def nonabelian_groups_of_order(n: int, timeout=120):
             _, i_str, desc = line.split("\t", 2)
             res.append({"n": n, "i": int(i_str), "description": desc})
     return res
+
+if __name__ == "__main__":
+    for i in [48, 64, 96, 144, 162, 168, 196]:
+        print(f"There are {len(nonabelian_groups_of_order(i))} non-abelian groups of size {i}")

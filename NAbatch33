@@ -10,4 +10,4 @@
 
 eval "$("$HOME/.local/bin/micromamba" shell hook -s bash)"
 micromamba activate gap
-python filter.py -i NAdata33 -z 3 -x 3 -k 2 -g -s 3 -n $SLURM_ARRAY_TASK_ID
+python filter.py -i NAdata33 -z 3 -x 3 -k 2 -g -s 1 -t 3600 -n 96 -r $SLURM_ARRAY_TASK_ID
