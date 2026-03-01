@@ -1489,6 +1489,8 @@ def find_non_abelian_codes_in_group(n, wz, wx, group, min_k=2):
     return [(code.group, code.z0, code.x0, code.symmetric, code.get_k()) for code in result]
 
 def find_all_non_abelian_codes(n, wz, wx, min_k=2):
+    if n == 0:
+        return []
     groups = nonabelian_groups_of_order(n)
     result = []
     for g in groups:
