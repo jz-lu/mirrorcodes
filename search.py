@@ -22,7 +22,7 @@ from isomorphism import (
     push_to_lex_minimal,
 )
 from mirror import MirrorCode, valid_non_abelian
-from util import code_connected, find_strides, index_to_array, partitions
+from util import find_strides, index_to_array, partitions
 from non_abelian import nonabelian_groups_of_order, build_indexed_group_ops
 
 

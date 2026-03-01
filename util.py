@@ -57,6 +57,26 @@ def _gf2_nullspace(A: np.ndarray) -> np.ndarray:
 
     return np.zeros((0, n_cols), dtype=np.uint8) if not basis else np.stack(basis, axis=0)
 
+def code_connected(stabs):
+    n = len(stabs)
+    reduced, _ = _gf2_rref(np.array(stabs))
+    sum_ = reduced[:, :n] + reduced[:, n:]
+    found = np.array([False] * n)
+    found[0] = True
+    visited = set()
+    while True:
+        found_something = False
+        for i in range(n):
+            if found[i] and i not in visited:
+                found_something = True
+                visited.add(i)
+                for j in range(n):
+                    for k in range(n):
+                        if sum_[j][i] > 0 and sum_[j][k] > 0:
+                            found[k] = True
+        if not found_something:
+            break
+    return (found).all()
 
 def _gf2_solve(A: np.ndarray, b: np.ndarray) -> np.ndarray:
     """
