@@ -236,11 +236,11 @@ def main(args):
                 in_data = None
                 with open(in_file, "rb") as f:
                     in_data = pickle.load(f)
-    
+
                 if stage == 2:
                     out_data = stage2(n, in_data, verbose = VERBOSE, abelian = abelian)
                 elif stage == 3:
-                    if r is not None:
+                    if r is not None and r >= 0:
                         start = min(width * r, len(in_data))
                         end = min(width * (r + 1), len(in_data))
                         in_data = in_data[start : end]
