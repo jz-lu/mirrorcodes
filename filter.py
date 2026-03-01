@@ -55,7 +55,9 @@ def stage1(n:int, Z_wt:int, X_wt:int, min_k:int = 3, abelian:bool = True, group:
     groups = nonabelian_groups_of_order(n)
     if group < 0 or group >= len(groups):
         return []
-    return find_non_abelian_codes_in_group(n, Z_wt, X_wt, groups[group], min_k=min_k)
+    g = groups[group]
+    gr = (g['n'], g['i'], g['description'])
+    return find_non_abelian_codes_in_group(n, Z_wt, X_wt, gr, min_k=min_k)
 
 
 def stage2(n:int, codes:list, verbose:bool = False, abelian:bool = True):
