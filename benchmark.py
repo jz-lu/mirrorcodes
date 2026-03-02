@@ -302,10 +302,10 @@ class StabilizerCode():
         )
 
         for decoder in decoders:
-            for i in range(len(ps)):
-                circuit = secs[i]
+            for j, nrd in enumerate(rounds_choices):
+                for i in range(len(ps)):
+                    circuit = secs[len(ps)*j + i]
 
-                for nrd in rounds_choices:
                     tasks.append(sinter.Task(
                         circuit=circuit,
                         decoder=decoder,
