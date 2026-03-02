@@ -243,13 +243,10 @@ class PushCircuit:
             return
         self.circuit.append(gate, targets)
 
-        # Reset gates: set to |+>, |0>, |+i>, respectively
-        if gate == 'RX':
-            self.circuit.append("Z_ERROR", targets, self.noise['p_init'])
-        elif gate == 'RZ':
-            self.circuit.append("X_ERROR", targets, self.noise['p_init'])
-        elif gate == 'RY':
-            self.circuit.append("X_ERROR", targets, self.noise['p_init'])
+        # Reset gates: set to |+>, |0>, |+i>, respectively for X, Y, and Z
+        if gate[0] == 'R':
+            self.resonate = True
+            self.circuit.append("Z_ERROR" if gate == 'RX' else 'X_ERROR', targets, self.noise['p_init'])
 
         # 1- and 2-qubit unitary gates. Locality t = t-qubit gate. We only do 1 and 2. All 2-qubit gates are controlled-U gates.
         else:
