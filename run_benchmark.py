@@ -22,6 +22,7 @@ import time
 import sinter
 import stim
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import tesseract_decoder
 import tesseract_decoder.tesseract as tesseract
 from tesseract_decoder import make_tesseract_sinter_decoders_dict, TesseractSinterDecoder
@@ -43,21 +44,21 @@ from mirror import MirrorCode
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
-            description="benchmark codes under various noise models"
+            description="Benchmark codes under various noise models"
         )
 
     parser.add_argument(
         "--idx", "-n",
         type=int,
-        required=True,
-        help="index"
+        default=0,
+        help="Index of code to be benchmarked"
     )
 
     parser.add_argument(
         "--type", "-t",
         type=str,
         default='codes',
-        help="benchmarking variant",
+        help="Benchmarking variant",
         choices=['codes', 'rounds', 'circuits']
     )
 
@@ -65,7 +66,7 @@ if __name__ == "__main__":
         "--circuit", "-c",
         type=str,
         default='bare',
-        help="syndrome extraction circuit type",
+        help="Syndrome extraction circuit type",
         choices=['bare', 'loop', 'css', 'ft', 'superdense', 'phenom']
     )
 
@@ -207,7 +208,7 @@ if __name__ == "__main__":
 
     T_LOW = 2.3 # min error rate is 10^-T_LOW
     T_HIGH = 1.5 # max error rate is 10^-T_HIGH
-    NUM_PROBS = 2
+    NUM_PROBS = 1
     NUM_SHOTS = 1
 
     if CIRCUIT == "phenom":
@@ -299,8 +300,8 @@ if __name__ == "__main__":
                         ]
         
         else:
-            raise ValueError(f"Invalid circuit type {CIRCUIT}")
-        print("Done")
+            raise SyntaxError(f"Invalid circuit type {CIRCUIT}")
+        print("Done.")
 
         print("Benchmarking...")
         sinter_stats = benchmarker.sinter_benchmark(
@@ -351,7 +352,6 @@ if __name__ == "__main__":
 
         tasks = []
         for circ_idx, circ_name in enumerate(CIRCUIT_NAMES):
-            SECS = []
             print(f"Making {circ_name} syndrome extraction circuits...")
             circ_func = None
             if circ_name == 'bare':
@@ -365,7 +365,7 @@ if __name__ == "__main__":
             elif circ_name == 'superdense':
                 circ_func = code.superdense_sec
             else:
-                raise ValueError(f"Invalid circuit type {CIRCUIT}")
+                raise SyntaxError(f"Invalid circuit type {circ_name}")
             
             # Add on to the list of benchmarking tasks
             for nrd in ROUND_CHOICES:
@@ -390,7 +390,6 @@ if __name__ == "__main__":
             
 
         print("Collecting...")
-        
         results = sinter.collect(
             num_workers=12,
             tasks=tasks,
@@ -399,7 +398,6 @@ if __name__ == "__main__":
             custom_decoders=decoder_dict,
             print_progress=True,
         )
-
         print("Done")
 
         colors = plt.get_cmap('tab10').colors[:len(CIRCUIT_NAMES)]
@@ -435,15 +433,115 @@ if __name__ == "__main__":
         plt.tight_layout()
         plt.savefig(f'plot_{IDENTIFIER}.pdf')
 
-
-        with open(f"data_{IDENTIFIER}_{circ_name}.csv", "w") as f:
+        with open(f"data_{IDENTIFIER}.csv", "w") as f:
             print(sinter.CSV_HEADER)
             for s in results:
                 print(s.to_csv_line(), file=f)
 
     elif TYPE == "codes":
+        """
+        Fix rounds at [1, d], fix a circuit given by `CIRCUIT`.
+        Iterate over different choices of codes.
+        """
+        IDENTIFIER = f"{TYPE}_{CIRCUIT}_{NUM_SHOTS}s"
 
-        pass
+        for code_idx, code_param in enumerate(CODES):
+            code = MirrorCode(*code_param)
+            CODE_NAME = NAMES[idx]
+            NOISE_MODEL_NAME = 'phenom' if CIRCUIT == 'phenom' else 'SI1000'
+            n, k, d = [int(x) for x in CODE_NAME.split('_')]
+            CODE_NAME = f'[[{n}, {k}, {d}]]'
+            ROUND_CHOICES = list(set([1, d]))
+
+            stabilizers = code.get_stim_tableau()
+            benchmarker = StabilizerCode(stabilizers, verbose=False, name=CODE_NAME)
+            print(f"Working on [[{code.get_n()}, {code.get_k()}]] code...")
+
+            print(f"Making {CIRCUIT} syndrome extraction circuits...")
+            circ_func = None
+            if CIRCUIT == 'bare':
+                circ_func = code.bare_ancilla_sec
+            elif CIRCUIT == 'loop':
+                circ_func = code.loop_flag_sec
+            elif CIRCUIT == 'css':
+                circ_func = code.ft_for_w6_css_sec
+            elif CIRCUIT == 'ft':
+                circ_func = code.ft_for_w6_sec
+            elif CIRCUIT == 'superdense':
+                circ_func = code.superdense_sec
+            else:
+                raise SyntaxError(f"Invalid circuit type {CIRCUIT}")
+
+            tasks = []
+            for nrd in ROUND_CHOICES:
+                for i in range(len(PS)):
+                    circuit = circ_func(
+                                    noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
+                                    num_rounds=nrd
+                                )
+
+                    tasks.append(sinter.Task(
+                        circuit=circuit,
+                        decoder='tesseract',
+                        json_metadata={"p": PS[i], 
+                                       "decoder": 'tesseract', 
+                                       "rounds": nrd, 
+                                       "code": fr'$[[{n},{k},{d}]]$',
+                                       "codeidx": code_idx
+                                       },
+                    ))
+            
+        print("Collecting...")
+        results = sinter.collect(
+            num_workers=12,
+            tasks=tasks,
+            max_shots=NUM_SHOTS,
+            decoders=['tesseract'],
+            custom_decoders=decoder_dict,
+            print_progress=True,
+        )
+        print("Done")
+
+        colors = plt.get_cmap('tab10').colors[:len(CODES)]
+
+        # Add to the plot
+        print("Plotting...")
+        plt.rcParams.update({
+            "font.family": "serif",
+            "mathtext.fontset": "cm",
+        })
+        plt.rc("font", size=12)
+        fig, ax = plt.subplots(1, 1)
+        sinter.plot_error_rate(
+            ax=ax,
+            stats=results,
+            x_func=lambda stat: stat.json_metadata['p'],
+            group_func=lambda stat: {'color': colors[stat.json_metadata['codeidx']], 
+                                    'linestyle': '--' if stat.json_metadata['rounds'] == 1 else '-',
+                                    'label': "_nolegend_" if stat.json_metadata['rounds'] == 1 else stat.json_metadata['code']},
+            failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'] * k,
+        )
+        ax.loglog(PS, PS, color='gray', linestyle='--')
+        # ax.set_ylim(5e-3, 5e-2)
+        ax.set_xlim(PS[0], PS[-1])
+        ax.loglog()
+        ax.set_title(f"Mirror Codes with Circuit Noise")
+        ax.set_xlabel("Physical error rate")
+        ax.set_ylabel("Logical error rate per round per logical")
+        ax.grid(which='major')
+        ax.grid(which='minor')
+        ax.legend()
+        # formatter = ticker.LogFormatterExponent(labelOnlyBase=False)
+        # ax.xaxis.set_major_formatter(formatter)
+        # ax.xaxis.set_minor_formatter(formatter)
+
+        plt.tight_layout()
+        plt.savefig(f'plot_{IDENTIFIER}.pdf')
+
+        with open(f"data_{IDENTIFIER}.csv", "w") as f:
+            print(sinter.CSV_HEADER)
+            for s in results:
+                print(s.to_csv_line(), file=f)
 
     else:
         raise SyntaxError(f"Invalid benchmarking type {TYPE}")
