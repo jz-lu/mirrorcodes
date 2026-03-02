@@ -14,14 +14,14 @@ The tableau is NOT in reduced form---there are dependent stabilizers! (E.g. thin
 import itertools as it
 import numpy as np
 from circuit import cached_schedule
-from util import find_isos, find_strides, shift_X
-from util import binary_rank, symp2Pauli, stimify_symplectic
+from util import find_strides
+from util import binary_rank, stimify_symplectic
 from benchmark import make_noise_model
-from test_cases import get_stabilizers
 from distance import distance, distance_estimate, make_code
 import stim
-#import tesseract_decoder
-#import tesseract_decoder.tesseract as tesseract
+from non_abelian import build_indexed_group_ops
+# import tesseract_decoder
+# import tesseract_decoder.tesseract as tesseract
 import time
 
 
@@ -120,6 +120,23 @@ def css_flips(group, z0, x0):
             return False, []
     return True, flips
 
+def non_abelian_stabilizers(code):
+    g = code.actualgroup
+    n = code.get_n()
+    stabs = np.zeros((n, 2 * n), dtype=np.uint8)
+    for i in range(n):
+        for j in code.z0:
+            stabs[i, g.mul(j, i)] = 1
+        for j in code.x0:
+            if code.symmetric:
+                stabs[i, g.mul(j, g.inv(i)) + n] = 1
+            else:
+                stabs[i, g.mul(g.inv(i), j) + n] = 1
+    comm = np.mod(stabs[:, :n] @ stabs[:, n:].T, 2)
+    return stabs if (comm == comm.T).all() else None
+
+def valid_non_abelian(code):
+    return code.get_stabilizers() is not None
 
 def find_stabilizers(group, z0, x0):
     """
@@ -341,7 +358,8 @@ class MirrorCode():
     The optional variables can be specified if they are precomputed. If they are
     not specified, they are computed by the class functions the first time they are queried.
     """
-    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None, d_est=None):
+    def __init__(self, group, z0, x0, n=None, k=None, d=None, is_css=None, d_est=None,
+                 abelian=True, symmetric=True, actualgroup=None):
         self.group = group
         self.z0 = np.array(z0, dtype = int)
         self.x0 = np.array(x0, dtype = int)
@@ -355,10 +373,19 @@ class MirrorCode():
         self.k = k
         self.d = d
         self.d_est = d_est
+        self.abelian = abelian
+        self.symmetric = symmetric
+        self.actualgroup = actualgroup
+        if actualgroup is None and not self.abelian:
+            self.actualgroup = build_indexed_group_ops(group)
 
     def get_stabilizers(self):
         if self.stabilizers is None:
-            self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+            if self.abelian:
+                self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+            else:
+                self.stabilizers = non_abelian_stabilizers(self)
+                self.CSS = False
         return self.stabilizers
     
     def get_stim_tableau(self):
@@ -376,7 +403,7 @@ class MirrorCode():
     
     def get_n(self):
         if self.n is None:
-            self.n = int(np.prod(self.group))
+            self.n = int(np.prod(self.group)) if self.abelian else self.actualgroup.n
         return self.n
     
     def get_k(self):
@@ -402,7 +429,8 @@ class MirrorCode():
     
     def is_CSS(self):
         if self.CSS is None:
-            self.stabilizers, self.CSS = find_stabilizers(self.group, self.z0, self.x0)
+            self.get_stabilizers()
+            return self.CSS
         return self.CSS
 
     def get_rate(self):
@@ -411,15 +439,14 @@ class MirrorCode():
     def get_rel_dist(self):
         return self.get_d() / self.get_n()
     
-    def phenomenological_sec(self, p_depol, p_meas, num_rounds):
+    def phenomenological_sec(self, noise, num_rounds=3):
         """
         Generic unphysical SEC which works for any stabilizer code. Useful for phenomenological noise analysis,
         in which we only consider measurement errors and some depolarizing error at the beginning of every round
         of syndrome extraction.
 
         Params:
-            * p_depol (float): depolarizing error probability per qubit at beginning of each round.
-            * p_meas (float): measurement probability error.
+            * noise (dict): noise object with keys 'p_depol' and 'p_meas'
             * num_rounds (int): number of rounds of syndrome extraction.
         """
         num_qubits = num_stabilizers = self.get_n()
@@ -432,8 +459,8 @@ class MirrorCode():
         circuit.append("MPP", stabilizer_paulis)
 
         for _ in range(num_rounds):
-            circuit.append("DEPOLARIZE1", targets=list(range(num_qubits)), arg=p_depol)
-            circuit.append("MPP", stabilizer_paulis, arg=p_meas)
+            circuit.append("DEPOLARIZE1", targets=list(range(num_qubits)), arg=noise['p_depol'])
+            circuit.append("MPP", stabilizer_paulis, arg=noise['p_meas'])
 
             for i in range(num_stabilizers):
                 circuit.append(
@@ -462,6 +489,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
+        print("Bare...")
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         QUBITS_PER_STAB = 1
         stabilizers = self.get_stabilizers()
@@ -503,6 +531,11 @@ class MirrorCode():
             sec.gate_round("MX", [0])
             for j, stab in enumerate(stabilizers):
                 sec.push_gate("DETECTOR", [stim.target_rec(-n + j), stim.target_rec(-2 * n + j)])
+        
+        for stabilizer_stim in stabilizers_stim:
+            sec.push_gate("MPP", stabilizer_stim, noiseless=True)
+        for j, stab in enumerate(stabilizers):
+            sec.push_gate("DETECTOR", [stim.target_rec(-n + j), stim.target_rec(-2 * n + j)])
 
         append_observable_includes_for_paulis(circuit=sec.circuit, paulis=all_logical_paulis)
         return sec.circuit
@@ -520,6 +553,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
+        print("Loop...")
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         QUBITS_PER_STAB = 2
         stabilizers = self.get_stabilizers()
@@ -570,6 +604,11 @@ class MirrorCode():
                 else:
                     sec.push_gate("DETECTOR", [stim.target_rec(-n * QUBITS_PER_STAB + j), stim.target_rec(-2 * n * QUBITS_PER_STAB + j)])
 
+        for stabilizer_stim in stabilizers_stim:
+            sec.push_gate("MPP", stabilizer_stim, noiseless=True)
+        for j, stab in enumerate(stabilizers):
+            sec.push_gate("DETECTOR", [stim.target_rec(-n + j), stim.target_rec(-(QUBITS_PER_STAB+1) * n + j)])
+
         append_observable_includes_for_paulis(circuit=sec.circuit, paulis=all_logical_paulis)
         return sec.circuit
     
@@ -587,6 +626,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
+        print("CSS FT...")
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         QUBITS_PER_STAB = 3
         stabilizers = self.get_stabilizers()
@@ -648,6 +688,11 @@ class MirrorCode():
                     sec.push_gate("DETECTOR", [stim.target_rec(-3 * n + j), stim.target_rec(-6 * n + j)])
             sec.tick()
 
+        for stabilizer_stim in stabilizers_stim:
+            sec.push_gate("MPP", stabilizer_stim, noiseless=True)
+        for j, stab in enumerate(stabilizers):
+            sec.push_gate("DETECTOR", [stim.target_rec(-n + j), stim.target_rec(-4 * n + j)])
+
         append_observable_includes_for_paulis(circuit=sec.circuit, paulis=all_logical_paulis)
         return sec.circuit
 
@@ -664,6 +709,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
+        print("FT general...")
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         QUBITS_PER_STAB = 6
         stabilizers = self.get_stabilizers()
@@ -742,6 +788,14 @@ class MirrorCode():
                                                stim.target_rec(-12 * n + 3 * j + 2)])
             sec.tick()
 
+        for stabilizer_stim in stabilizers_stim:
+            sec.push_gate("MPP", stabilizer_stim, noiseless=True)
+        for j, stab in enumerate(stabilizers):
+            sec.push_gate("DETECTOR", [stim.target_rec(-n + j), 
+                                       stim.target_rec(-7 * n + 3 * j),
+                                       stim.target_rec(-7 * n + 3 * j + 1),
+                                       stim.target_rec(-7 * n + 3 * j + 2)])
+
         append_observable_includes_for_paulis(circuit=sec.circuit, paulis=all_logical_paulis)
         return sec.circuit
 
@@ -761,6 +815,7 @@ class MirrorCode():
         Returns:
             * stim.Circuit object of the syndrome extraction circuit for the mirror code.
         """
+        print("Superdense...")
         # The first n qubits are the data qubits, and will be the controls for the syndromes.
         QUBITS_PER_STAB = 1
         stabilizers = self.get_stabilizers()
@@ -822,6 +877,11 @@ class MirrorCode():
                 else:
                     sec.push_gate("DETECTOR", [stim.target_rec(-n - offset + j), stim.target_rec(-2 * n - 2 * offset + j)])
             sec.tick()
+        
+        for stabilizer_stim in stabilizers_stim:
+            sec.push_gate("MPP", stabilizer_stim, noiseless=True)
+        for j, stab in enumerate(stabilizers):
+            sec.push_gate("DETECTOR", [stim.target_rec(-n + j), stim.target_rec(-2 * n - offset + j)])
 
         append_observable_includes_for_paulis(circuit=sec.circuit, paulis=all_logical_paulis)
         return sec.circuit

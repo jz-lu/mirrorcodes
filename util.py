@@ -4,12 +4,240 @@
 A bunch of simple helper functions that process and convert between
 stim, Pauli string, and symplectic representations of codes.
 """
-import itertools as it
-import math
 import numpy as np
 import stim
+import os
 
-def symp2Pauli(x, n):
+# ---------- GF(2) linear algebra helpers ----------
+
+def _gf2_rref(A: np.ndarray):
+    """RREF of A over GF(2). Returns (R, pivot_cols)."""
+    A = (A.copy() & 1).astype(np.uint8)
+    n_rows, n_cols = A.shape
+    pivots = []
+    r = 0
+    for c in range(n_cols):
+        pivot = None
+        for rr in range(r, n_rows):
+            if A[rr, c]:
+                pivot = rr
+                break
+        if pivot is None:
+            continue
+        if pivot != r:
+            A[[r, pivot]] = A[[pivot, r]]
+        for rr in range(n_rows):
+            if rr != r and A[rr, c]:
+                A[rr] ^= A[r]
+        pivots.append(c)
+        r += 1
+        if r == n_rows:
+            break
+    return A, pivots
+
+def _gf2_nullspace(A: np.ndarray) -> np.ndarray:
+    """
+    Basis for nullspace of A over GF(2) as a (k, n_cols) uint8 array.
+    Solves A x = 0.
+    """
+    R, pivots = _gf2_rref(A)
+    n_rows, n_cols = R.shape
+    pivot_set = set(pivots)
+    free_cols = [c for c in range(n_cols) if c not in pivot_set]
+
+    basis = []
+    for f in free_cols:
+        v = np.zeros(n_cols, dtype=np.uint8)
+        v[f] = 1
+        # pivot var equals the coefficient in the pivot row (since RHS=0)
+        for i, pc in enumerate(pivots):
+            if R[i, f]:
+                v[pc] = 1
+        basis.append(v)
+
+    return np.zeros((0, n_cols), dtype=np.uint8) if not basis else np.stack(basis, axis=0)
+
+def code_connected(stabs):
+    n = len(stabs)
+    reduced, _ = _gf2_rref(np.array(stabs))
+    sum_ = reduced[:, :n] + reduced[:, n:]
+    found = np.array([False] * n)
+    found[0] = True
+    visited = set()
+    while True:
+        found_something = False
+        for i in range(n):
+            if found[i] and i not in visited:
+                found_something = True
+                visited.add(i)
+                for j in range(n):
+                    for k in range(n):
+                        if sum_[j][i] > 0 and sum_[j][k] > 0:
+                            found[k] = True
+        if not found_something:
+            break
+    return (found).all()
+
+def _gf2_solve(A: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """
+    Solve A x = b over GF(2) for one solution x (free vars set to 0).
+    Raises ValueError if inconsistent.
+    """
+    A = (A.copy() & 1).astype(np.uint8)
+    b = (b.copy() & 1).astype(np.uint8)
+    k, m = A.shape
+    aug = np.concatenate([A, b.reshape(-1, 1)], axis=1)
+
+    pivots = []
+    r = 0
+    for c in range(m):
+        pivot = None
+        for rr in range(r, k):
+            if aug[rr, c]:
+                pivot = rr
+                break
+        if pivot is None:
+            continue
+        if pivot != r:
+            aug[[r, pivot]] = aug[[pivot, r]]
+        for rr in range(k):
+            if rr != r and aug[rr, c]:
+                aug[rr] ^= aug[r]
+        pivots.append(c)
+        r += 1
+        if r == k:
+            break
+
+    # inconsistency: 0 = 1 row
+    for rr in range(k):
+        if aug[rr, :m].sum() == 0 and aug[rr, m]:
+            raise ValueError("No GF(2) solution: sign constraints are inconsistent.")
+
+    x = np.zeros(m, dtype=np.uint8)
+    # in RREF with free vars = 0, pivot vars equal RHS
+    for i, pc in enumerate(pivots):
+        x[pc] = aug[i, m]
+    return x
+
+
+# ---------- Pauli phase computation (canonical Y convention) ----------
+
+def _check_commuting(z: np.ndarray, x: np.ndarray) -> bool:
+    # symplectic commutator: (z x^T + x z^T) mod 2 must be 0
+    comm = (z @ x.T + x @ z.T) & 1
+    return bool(np.all(comm == 0))
+
+
+def _product_phase_for_subset(
+    z: np.ndarray,
+    x: np.ndarray,
+    subset: np.ndarray,
+    sign_bits: np.ndarray | None = None,
+):
+    """
+    Multiply the chosen generators (subset[i]=1).
+
+    Representation used:
+      generator i corresponds to  i^{p_i} X^{x_i} Z^{z_i}
+      with canonical p_i = (z_i · x_i) mod 4  (this makes overlaps into Y's),
+      and an extra -1 sign flip adds +2 mod 4.
+
+    Returns (z_acc, x_acc, p_acc mod 4).
+    """
+    m, n = z.shape
+    subset = (subset & 1).astype(np.uint8)
+    if sign_bits is None:
+        sign_bits = np.zeros(m, dtype=np.uint8)
+    sign_bits = (sign_bits & 1).astype(np.uint8)
+
+    p_acc = 0
+    z_acc = np.zeros(n, dtype=np.uint8)
+    x_acc = np.zeros(n, dtype=np.uint8)
+
+    for i in np.nonzero(subset)[0]:
+        p_i = (int((z[i] & x[i]).sum()) % 4 + 2 * int(sign_bits[i])) % 4
+        # multiplying current (X^x_acc Z^z_acc) by (X^x_i Z^z_i)
+        # contributes (-1)^{z_acc · x_i} = i^{2*(z_acc·x_i mod2)} to the phase.
+        comm_parity = int((z_acc & x[i]).sum()) & 1
+        p_acc = (p_acc + p_i + 2 * comm_parity) % 4
+        z_acc ^= z[i]
+        x_acc ^= x[i]
+
+    return z_acc, x_acc, p_acc
+
+
+# ---------- Main function ----------
+
+def sign_corrections_symplectic(H: np.ndarray) -> np.ndarray:
+    """
+    Input:
+      H: (m x 2n) binary matrix in symplectic form [Z | X]
+         (Z columns first, then X columns).
+
+    Output:
+      f: length-m binary vector.
+         If f[i]=1, multiply stabilizer i by -1 (flip its sign) to eliminate any -I
+         produced by linear relations among the rows (under the canonical Y convention).
+
+    Notes:
+      - Assumes the rows mutually commute (raises ValueError otherwise).
+      - Assumes the current signs are all +1; if you have existing sign bits s,
+        you would use: s_corrected = s XOR f.
+    """
+    H = (np.array(H, dtype=np.uint8) & 1)
+    if H.ndim != 2 or (H.shape[1] % 2) != 0:
+        raise ValueError("H must be an m x 2n binary matrix (even number of columns).")
+
+    m, two_n = H.shape
+    n = two_n // 2
+    z = H[:, :n]
+    x = H[:, n:]
+
+    if not _check_commuting(z, x):
+        raise ValueError("Rows do not mutually commute (not a stabilizer generator set).")
+
+    # Relations among generators are lambda in GF(2)^m with H^T lambda = 0
+    rel_basis = _gf2_nullspace(H.T)  # shape (k, m)
+    k = rel_basis.shape[0]
+    if k == 0:
+        return np.zeros(m, dtype=np.uint8)
+
+    # For each independent relation, detect whether the product is -I (need parity 1) or +I (parity 0)
+    r = np.zeros(k, dtype=np.uint8)
+    for j in range(k):
+        lam = rel_basis[j]
+        z_acc, x_acc, p_acc = _product_phase_for_subset(z, x, lam)
+        if z_acc.any() or x_acc.any():
+            raise RuntimeError("Internal error: relation did not cancel supports.")
+        if p_acc == 2:
+            r[j] = 1
+        elif p_acc == 0:
+            r[j] = 0
+        else:
+            raise ValueError("A cancelling relation produced ±iI (unexpected for commuting Hermitian Paulis).")
+
+    # Choose sign flips f so that every relation product becomes +I:
+    # for each relation lam:  lam · f = r   (mod 2)
+    f = _gf2_solve(rel_basis, r)
+
+    # (Optional) verify on the basis relations
+    for j in range(k):
+        _, _, p_acc = _product_phase_for_subset(z, x, rel_basis[j], sign_bits=f)
+        if p_acc != 0:
+            raise RuntimeError("Verification failed: sign correction did not fix all basis relations.")
+
+    return f
+
+def gap_bat():
+    gap_bat = r"C:/Users/andsin/AppData/Local/GAP-4.15.1/gap.bat"
+    gap_root = os.path.dirname(os.path.abspath(gap_bat))
+    runtime_bin = os.path.join(gap_root, "runtime", "bin")
+    bash_exe = os.path.join(runtime_bin, "bash.exe")
+    if not os.path.exists(bash_exe):
+        gap_bat = r"C:/Program Files/GAP-4.15.1/gap.bat"
+    return gap_bat
+
+def symp2Pauli(x, n, positive=True):
     """
     Return a sign-free Pauli string representation of the length 2`n` symplectic vector `x`.
 
@@ -32,7 +260,7 @@ def symp2Pauli(x, n):
         elif x[i] == 1 and x[i+n] == 0:
             char = 'Z'
         vec.append(char)
-    return ''.join(vec)
+    return ('' if positive else '-') + ''.join(vec)
 
 
 def stimify_stabs(stabs):
@@ -48,7 +276,8 @@ def stimify_symplectic(stabs):
     """
     assert len(stabs[0]) % 2 == 0 and len(stabs[0]) > 0
     n = len(stabs[0]) // 2
-    stabs = [symp2Pauli(vec, n) for vec in stabs]
+    signs = sign_corrections_symplectic(stabs)
+    stabs = [symp2Pauli(vec, n, positive=(sign == 0)) for vec, sign in zip(stabs, signs)]
     return stimify_stabs(stabs)
 
 
@@ -118,56 +347,6 @@ def index_to_array(group, index):
         index //= g
     return result[::-1]
 
-def index_to_tuple(group, index):
-    """
-    Compute a tuple representing a qubit in group, given an index from 0 to n - 1,
-    the size of the group. This is no different than expressing a number "base
-    group". Notably, this works for larger indices too, but will only consider the
-    index mod n.
-
-    Params:
-        * group (np.ndarray): the group we are decomposing the index into
-        * index (int): A number from 0 to n - 1 corresponding to a tuple mod group.
-    
-    Returns:
-        * A tuple with the same length as group, corresponding to the indexth
-        tuple mod group.
-    """
-    result = []
-    for g in group[::-1]:
-        result.append(index % g)
-        index //= g
-    return (*result[::-1],)
-
-def gcd(*args):
-    """
-    Find the gcd of args.
-
-    Params:
-        * args (any number of ints): values whose gcd we want to find
-
-    Returns:
-        * Int containing the gcd of args.
-    """
-    result = args[0]
-    for num in args[1:]:
-        result = math.gcd(result, num)
-    return result
-
-def find_isos(group):
-    """
-    Find all values relatively prime to group, with threading over a list.
-    
-    Params:
-        * group (int or np.ndarray): group size or list of group sizes
-
-    Returns:
-        * List (of lists) of values relatively prime to each group size
-    """
-    if isinstance(group, int):
-        return [i for i in range(1, group) if gcd(i, group) == 1]
-    return [[i for i in range(1, g) if gcd(i, g) == 1] for g in group]
-
 def binary_rank(A):
     """
     Finds the rank mod 2 of a matrix A without explicit row swapping,
@@ -196,37 +375,3 @@ def binary_rank(A):
         if r == m:
             break
     return r
-
-def compute_rank_from_tuples(group, qubits):
-    """
-    Finds an upper bound for the rank of the stabilizer matrix by just using one
-    side of the parity checks.
-
-    Params:
-        * group (np.ndarray): the group we are counting our qubits in
-        * qubits (np.ndarray): the qubits making up Z0 or X0, mod group
-
-    Returns:
-        * int which is the rank of the binary matrix with shifts of qubits
-    """
-    n = np.prod(group)
-    matrix = np.zeros((n, n), dtype = np.uint8)
-    strides = find_strides(group)
-    for i, j in enumerate(it.product(*[range(i) for i in group])):
-        matrix[i, np.mod(qubits + j, group) @ strides] = 1
-    return binary_rank(matrix)
-
-def shift_X(group, x0):
-    """
-    Method for shifting x0 to make the first element have 0's or 1's.
-
-    Params:
-        * group (np.ndarray): the group we are counting our qubits in
-        * x0 (np.ndarray): the qubits making up X0, mod group
-
-    Returns:
-        * shifted version of x0
-    """
-    shift_bump = np.array([1 if g % 2 == 0 and i % 2 == 1 else 0
-                           for i, g in zip(x0[0], group)])
-    return np.mod(x0 - x0[0] + shift_bump, group)

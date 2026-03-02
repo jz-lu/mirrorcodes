@@ -11,12 +11,12 @@ import numpy as np
 import stim
 import multiprocessing
 import time
-# import sinter
+import sinter
 
 
 # Models are based on the specs provided by
 # https://arxiv.org/pdf/2108.10457
-def make_noise_model(p = 0.001, name = 'SD'):
+def make_noise_model(name, p = 0.001):
     if name == 'SD': # "SD6" model
         return {
             'p2': p,
@@ -26,15 +26,22 @@ def make_noise_model(p = 0.001, name = 'SD'):
             'p_idle': p,
             'p_res_idle': p,
         }
-    else: # "SI1000" model
+    elif name == 'phenom': # phenomenological model
+        return {
+            'p_depol': p,
+            'p_meas': p/4
+        }
+    elif name == 'SI1000': # "SI1000" model
         return {
             'p2': p,
             'p1': p / 10,
             'p_init': 2 * p,
             'p_meas': 5 * p,
-            'p_idle': p / 10,
-            'p_res_idle': 2 * p,
+            'p_idle': 0,
+            'p_res_idle': 0,
         }
+    else:
+        raise SyntaxError(f"Invalid name '{name}'")
 
 
 def benchmark(sec, num_shots = 1000, verbose=False):
@@ -254,7 +261,8 @@ class StabilizerCode():
     
     def sinter_benchmark(self, ps, secs, 
                            rounds_choices = [3, 5, 7], num_shots = 1000,
-                           plot=False, save_as="./result.jpeg", verbose=False):
+                           plot=False, save_as="./result.jpeg", verbose=False,
+                           phenom=False):
         """
         Benchmark in parallel using the sinter package instead of an in-house solution.
         It probably is wiser to use sinter....
@@ -278,7 +286,7 @@ class StabilizerCode():
         # decoders = ['tesseract', 'tesseract-long-beam', 'tesseract-short-beam']
         decoders = ['tesseract']
         decoder_dict = make_tesseract_sinter_decoders_dict()
-        # # You can also make your own custom Tesseract Decoder to-be-used with Sinter.
+        # You can also make your own custom Tesseract Decoder to-be-used with Sinter.
         # decoders.append('custom-tesseract-decoder')
         decoder_dict['custom-tesseract-decoder'] = TesseractSinterDecoder(
             det_beam=10,
@@ -301,6 +309,8 @@ class StabilizerCode():
                         decoder=decoder,
                         json_metadata={"p": ps[i], "decoder": decoder, "rounds": nrd},
                     ))
+
+        print("Collecting...")
         
         results = sinter.collect(
             num_workers=8,
@@ -310,8 +320,15 @@ class StabilizerCode():
             custom_decoders=decoder_dict,
             print_progress=verbose,
         )
+
+        print("Done")
         
         if plot:
+            plt.rcParams.update({
+                "font.family": "serif",
+                "mathtext.fontset": "cm",
+            })
+            plt.rc("font", size=12)
             fig, ax = plt.subplots(1, 1)
             sinter.plot_error_rate(
                 ax=ax,
@@ -321,16 +338,18 @@ class StabilizerCode():
                 failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'],
             )
             # physical_error_rates = 1 - (1 - ps)**self.num_logicals
-            # ax.loglog(ps, physical_error_rates, color='gray', linestyle='--')
+            ax.loglog(ps, ps, color='gray', linestyle='--')
             # ax.set_ylim(5e-3, 5e-2)
             ax.set_xlim(ps[0], ps[-1])
             ax.loglog()
-            ax.set_title(f"{'' if self.name is None else ' ' + self.name} Error Rates with Circuit Noise ({num_shots:.0E} shots)")
+            noise_type = "Phenomenological" if phenom else "Circuit" 
+            ax.set_title(f"{'' if self.name is None else ' ' + self.name} with {noise_type} Noise")
             ax.set_xlabel("Physical error rate")
             ax.set_ylabel("Logical error rate per round")
             ax.grid(which='major')
             ax.grid(which='minor')
             ax.legend()
+            plt.tight_layout()
             plt.savefig(save_as)
         
         if verbose:
