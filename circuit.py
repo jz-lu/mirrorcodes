@@ -324,7 +324,7 @@ def cached_schedule(code: Any):
     value_cap = 16
     while value_cap > best_w:
         value_cap -= 1
-        print(f"Trying w = {value_cap}")
+        print(f"Trying w = {value_cap}", flush=True)
         ok, compressed, w, W, values = solve_value_assignment(code, value_cap=value_cap)
         if ok:
             data = {

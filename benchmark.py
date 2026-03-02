@@ -16,7 +16,7 @@ import sinter
 
 # Models are based on the specs provided by
 # https://arxiv.org/pdf/2108.10457
-def make_noise_model(p = 0.001, name = 'SD'):
+def make_noise_model(name, p = 0.001):
     if name == 'SD': # "SD6" model
         return {
             'p2': p,
@@ -37,8 +37,8 @@ def make_noise_model(p = 0.001, name = 'SD'):
             'p1': p / 10,
             'p_init': 2 * p,
             'p_meas': 5 * p,
-            'p_idle': p / 10,
-            'p_res_idle': 2 * p,
+            'p_idle': 0,
+            'p_res_idle': 0,
         }
     else:
         raise SyntaxError(f"Invalid name '{name}'")
@@ -283,11 +283,11 @@ class StabilizerCode():
         from tesseract_decoder import make_tesseract_sinter_decoders_dict, TesseractSinterDecoder
         tasks = []
 
-        decoders = ['tesseract', 'tesseract-long-beam', 'tesseract-short-beam']
-        # decoders = ['tesseract']
+        # decoders = ['tesseract', 'tesseract-long-beam', 'tesseract-short-beam']
+        decoders = ['tesseract']
         decoder_dict = make_tesseract_sinter_decoders_dict()
         # You can also make your own custom Tesseract Decoder to-be-used with Sinter.
-        decoders.append('custom-tesseract-decoder')
+        # decoders.append('custom-tesseract-decoder')
         decoder_dict['custom-tesseract-decoder'] = TesseractSinterDecoder(
             det_beam=10,
             beam_climbing=True,

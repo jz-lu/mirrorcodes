@@ -12,7 +12,7 @@ def generate_identifier(n):
 
 def get_filename(stage, n, r = None, abelian = True):
     abelianPFX = '' if abelian else 'NA_'
-    if stage == 3 and r is not None:
+    if stage in [1, 3] and r is not None and r >= 0:
         return f'{abelianPFX}{STAGEPFX}{stage}_{generate_identifier(n)}_part{r}.pkl'
     return f'{abelianPFX}{STAGEPFX}{stage}_{generate_identifier(n)}.pkl'
 
