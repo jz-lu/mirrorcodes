@@ -183,10 +183,10 @@ if __name__ == "__main__":
 
     benchmarker = StabilizerCode(stabilizers, verbose=False, name=CODE_NAME)
 
-    T_LOW = 6 # min error rate is 10^-T_LOW
-    T_HIGH = 2 # max error rate is 10^-T_HIGH
+    T_LOW = 2.5 # min error rate is 10^-T_LOW
+    T_HIGH = 1.5 # max error rate is 10^-T_HIGH
     NUM_PROBS = 8
-    NUM_SHOTS = 100_000
+    NUM_SHOTS = 20_000
 
     if PHENOM:
         T_LOW = 2
@@ -270,8 +270,10 @@ if __name__ == "__main__":
     print("Done")
 
     print("Benchmarking...")
-    sinter_stats = benchmarker.sinter_benchmark(ps=PS,
+    sinter_stats = benchmarker.sinter_benchmark(
+                                ps=PS,
                                 secs=SECS,
+                                num_logicals=k,
                                 rounds_choices=ROUND_CHOICES,
                                 num_shots=NUM_SHOTS,
                                 plot=True,

@@ -37,8 +37,8 @@ def make_noise_model(name, p = 0.001):
             'p1': p / 10,
             'p_init': 2 * p,
             'p_meas': 5 * p,
-            'p_idle': 0,
-            'p_res_idle': 0,
+            'p_idle': p/10,
+            'p_res_idle': 2*p
         }
     else:
         raise SyntaxError(f"Invalid name '{name}'")
@@ -259,7 +259,7 @@ class StabilizerCode():
         
         return physical_error_rates, logical_error_rates
     
-    def sinter_benchmark(self, ps, secs, 
+    def sinter_benchmark(self, ps, secs, num_logicals, 
                            rounds_choices = [3, 5, 7], num_shots = 1000,
                            plot=False, save_as="./result.jpeg", verbose=False,
                            phenom=False):
@@ -268,7 +268,9 @@ class StabilizerCode():
         It probably is wiser to use sinter....
         
         Params:
+            * ps (list:float): list of physical error rates.
             * secs (list:stim.Circuit): list of syndrome extraction circuits.
+            * num_logicals (int): number of logical qubits in code
             * rounds_choices (list:int): list of choices for number of rounds of syndrome extraction.
             * num_shots (float): number of trials.
             * plot (bool): produce a pseudothreshold plot.
@@ -313,7 +315,7 @@ class StabilizerCode():
         print("Collecting...")
         
         results = sinter.collect(
-            num_workers=8,
+            num_workers=12,
             tasks=tasks,
             max_shots=num_shots,
             decoders=decoders,
@@ -335,7 +337,7 @@ class StabilizerCode():
                 stats=results,
                 x_func=lambda stat: stat.json_metadata['p'],
                 group_func=lambda stat: stat.json_metadata['rounds'],
-                failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'],
+                failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'] * num_logicals,
             )
             # physical_error_rates = 1 - (1 - ps)**self.num_logicals
             ax.loglog(ps, ps, color='gray', linestyle='--')
@@ -345,10 +347,20 @@ class StabilizerCode():
             noise_type = "Phenomenological" if phenom else "Circuit" 
             ax.set_title(f"{'' if self.name is None else ' ' + self.name} with {noise_type} Noise")
             ax.set_xlabel("Physical error rate")
-            ax.set_ylabel("Logical error rate per round")
+            ax.set_ylabel("Logical error rate per round per logical")
             ax.grid(which='major')
             ax.grid(which='minor')
             ax.legend()
+
+            handles, labels = plt.gca().get_legend_handles_labels()
+
+            # Sort by converting the label to an integer
+            # zip binds them together, sorted() reorders them, and zip(*) unpacks them back
+            labels, handles = zip(*sorted(zip(labels, handles), key=lambda t: int(t[0])))
+
+            # 3. Create the legend with the sorted lists
+            plt.legend(handles, labels)
+
             plt.tight_layout()
             plt.savefig(save_as)
         
