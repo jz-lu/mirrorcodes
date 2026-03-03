@@ -215,8 +215,8 @@ if __name__ == "__main__":
             # '90_8_10',
             '144_12_12']
 
-    T_LOW = 3 # min error rate is 10^-T_LOW
-    T_HIGH = 1.5 # max error rate is 10^-T_HIGH
+    T_LOW = 2.8 # min error rate is 10^-T_LOW
+    T_HIGH = 1.69 # max error rate is 10^-T_HIGH
     NUM_PROBS = 5
     NUM_SHOTS = 15_000
 
