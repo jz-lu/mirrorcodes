@@ -208,7 +208,7 @@ if __name__ == "__main__":
 
     T_LOW = 2.5 # min error rate is 10^-T_LOW
     T_HIGH = 1.5 # max error rate is 10^-T_HIGH
-    NUM_PROBS = 1
+    NUM_PROBS = 6
     NUM_SHOTS = 10_000
 
     if CIRCUIT == "phenom":
@@ -391,7 +391,7 @@ if __name__ == "__main__":
             stats=results,
             x_func=lambda stat: stat.json_metadata['p'],
             group_func=lambda stat: {'color': colors[stat.json_metadata['circidx']], 
-                                     'linestyle': '--' if stat.json_metadata['rounds'] == 1 else '-',
+                                     'linestyle': ':' if stat.json_metadata['rounds'] == 1 else '-',
                                      'label': "_nolegend_" if stat.json_metadata['rounds'] == 1 else stat.json_metadata['circuit']},
             failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'] * k,
         )
