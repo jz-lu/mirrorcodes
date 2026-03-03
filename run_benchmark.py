@@ -188,28 +188,28 @@ if __name__ == "__main__":
     CODES = [CODE_TORIC,
             CODE_30_8_4, 
             CODE_36_6_6,
-            CODE_48_8_6, 
+            # CODE_48_8_6, 
             CODE_48_4_8, 
             CODE_72_12_6, 
             CODE_72_8_8, 
             CODE_85_8_9, 
-            CODE_90_8_10, 
+            # CODE_90_8_10, 
             CODE_144_12_12]
     NAMES = ['72_2_6',
             '30_8_4',
             '36_6_6',
-            '48_8_6',
+            # '48_8_6',
             '48_4_8',
             '72_12_6',
             '72_8_8',
             '85_8_9',
-            '90_8_10',
+            # '90_8_10',
             '144_12_12']
 
-    T_LOW = 2.3 # min error rate is 10^-T_LOW
+    T_LOW = 2.5 # min error rate is 10^-T_LOW
     T_HIGH = 1.5 # max error rate is 10^-T_HIGH
     NUM_PROBS = 1
-    NUM_SHOTS = 1
+    NUM_SHOTS = 10_000
 
     if CIRCUIT == "phenom":
         T_LOW = 2
@@ -228,6 +228,7 @@ if __name__ == "__main__":
         Fix a code given by `CODES[idx]`, fix a circuit given by `CIRCUIT`.
         Iterate over different choices of rounds.
         """
+        print("=== TYPE: rounds ===")
         code_param = CODES[idx]
         code = MirrorCode(*code_param)
         CODE_NAME = NAMES[idx]
@@ -248,59 +249,34 @@ if __name__ == "__main__":
         ROUND_CHOICES = list(set([1, 2, d-3, d]))
 
         print("Making syndrome extraction circuits...")
-        SECS = None
+        circ_func = None
         if CIRCUIT == 'phenom':
             print("Syndrome extraction: phenomenological")
-            SECS = [code.phenomenological_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
-                                        num_rounds=nrd
-                                        )
-                                        for nrd in ROUND_CHOICES
-                                        for i in range(len(PS))
-                    ]
+            circ_func = code.phenomenological_sec
         elif CIRCUIT == 'bare':
             print("Syndrome extraction: bare circuit")
-            SECS = [code.bare_ancilla_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
-                                        num_rounds=nrd
-                                        )
-                                        for nrd in ROUND_CHOICES
-                                        for i in range(len(PS))
-                    ]
+            circ_func = code.bare_ancilla_sec
         elif CIRCUIT == 'loop':
             print("Syndrome extraction: loop circuit")
-            SECS = [code.loop_flag_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
-                                        num_rounds=nrd
-                                        )
-                                        for nrd in ROUND_CHOICES
-                                        for i in range(len(PS))
-                    ]
+            circ_func = code.loop_flag_sec
         elif CIRCUIT == 'css':
             print("Syndrome extraction: CSS fault-tolerant circuit")
-            SECS = [code.ft_for_w6_css_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
-                                        num_rounds=nrd
-                                        )
-                                        for nrd in ROUND_CHOICES
-                                        for i in range(len(PS))
-                    ]
+            circ_func = code.ft_for_w6_css_sec
         elif CIRCUIT == 'ft':
             print("Syndrome extraction: general fault-tolerant circuit")
-            SECS = [code.ft_for_w6_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
-                                        num_rounds=nrd
-                                        )
-                                        for nrd in ROUND_CHOICES
-                                        for i in range(len(PS))
-                    ]
-
+            circ_func = code.ft_for_w6_sec
         elif CIRCUIT == 'superdense':
             print("Syndrome extraction: superdense circuit")
-            SECS = [code.superdense_sec(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
+            circ_func = code.superdense_sec
+        else:
+            raise SyntaxError(f"Invalid circuit type {CIRCUIT}")
+        
+        SECS = [circ_func(noise=make_noise_model(NOISE_MODEL_NAME, PS[i]),
                                             num_rounds=nrd
                                             )
                                             for nrd in ROUND_CHOICES
                                             for i in range(len(PS))
                         ]
-        
-        else:
-            raise SyntaxError(f"Invalid circuit type {CIRCUIT}")
         print("Done.")
 
         print("Benchmarking...")
@@ -315,11 +291,11 @@ if __name__ == "__main__":
                                     save_as=f"plot_{IDENTIFIER}.pdf",
                                     phenom=(CIRCUIT == "phenom")
                                     )
-        print("Done")
+        print("Done.")
 
 
         with open(f"data_{IDENTIFIER}.csv", "w") as f:
-            print(sinter.CSV_HEADER)
+            print(sinter.CSV_HEADER, file=f)
             for s in sinter_stats:
                 print(s.to_csv_line(), file=f)
     
@@ -328,6 +304,7 @@ if __name__ == "__main__":
         Fix a code given by `CODES[idx]`, fix only 1 round and d rounds of syndrome extraction.
         Iterate over different choices of syndrome extraction circuits.
         """
+        print("=== TYPE: circuits ===")
         code_param = CODES[idx]
         code = MirrorCode(*code_param)
         CODE_NAME = NAMES[idx]
@@ -386,9 +363,8 @@ if __name__ == "__main__":
                                        },
                     ))
 
-            print("Done")
+            print("Done.")
             
-
         print("Collecting...")
         results = sinter.collect(
             num_workers=12,
@@ -398,7 +374,7 @@ if __name__ == "__main__":
             custom_decoders=decoder_dict,
             print_progress=True,
         )
-        print("Done")
+        print("Done.")
 
         colors = plt.get_cmap('tab10').colors[:len(CIRCUIT_NAMES)]
 
@@ -434,7 +410,7 @@ if __name__ == "__main__":
         plt.savefig(f'plot_{IDENTIFIER}.pdf')
 
         with open(f"data_{IDENTIFIER}.csv", "w") as f:
-            print(sinter.CSV_HEADER)
+            print(sinter.CSV_HEADER, file=f)
             for s in results:
                 print(s.to_csv_line(), file=f)
 
@@ -443,11 +419,13 @@ if __name__ == "__main__":
         Fix rounds at [1, d], fix a circuit given by `CIRCUIT`.
         Iterate over different choices of codes.
         """
+        print("=== TYPE: codes ===")
         IDENTIFIER = f"{TYPE}_{CIRCUIT}_{NUM_SHOTS}s"
 
+        tasks = []
         for code_idx, code_param in enumerate(CODES):
             code = MirrorCode(*code_param)
-            CODE_NAME = NAMES[idx]
+            CODE_NAME = NAMES[code_idx]
             NOISE_MODEL_NAME = 'phenom' if CIRCUIT == 'phenom' else 'SI1000'
             n, k, d = [int(x) for x in CODE_NAME.split('_')]
             CODE_NAME = f'[[{n}, {k}, {d}]]'
@@ -460,19 +438,23 @@ if __name__ == "__main__":
             print(f"Making {CIRCUIT} syndrome extraction circuits...")
             circ_func = None
             if CIRCUIT == 'bare':
+                print("Bare syndrome extraction...")
                 circ_func = code.bare_ancilla_sec
             elif CIRCUIT == 'loop':
+                print("Loop syndrome extraction...")
                 circ_func = code.loop_flag_sec
             elif CIRCUIT == 'css':
+                print("CSS-FT syndrome extraction...")
                 circ_func = code.ft_for_w6_css_sec
             elif CIRCUIT == 'ft':
+                print("FT syndrome extraction...")
                 circ_func = code.ft_for_w6_sec
             elif CIRCUIT == 'superdense':
+                print("Superdense syndrome extraction...")
                 circ_func = code.superdense_sec
             else:
                 raise SyntaxError(f"Invalid circuit type {CIRCUIT}")
 
-            tasks = []
             for nrd in ROUND_CHOICES:
                 for i in range(len(PS)):
                     circuit = circ_func(
@@ -500,7 +482,7 @@ if __name__ == "__main__":
             custom_decoders=decoder_dict,
             print_progress=True,
         )
-        print("Done")
+        print("Done.")
 
         colors = plt.get_cmap('tab10').colors[:len(CODES)]
 
@@ -517,7 +499,7 @@ if __name__ == "__main__":
             stats=results,
             x_func=lambda stat: stat.json_metadata['p'],
             group_func=lambda stat: {'color': colors[stat.json_metadata['codeidx']], 
-                                    'linestyle': '--' if stat.json_metadata['rounds'] == 1 else '-',
+                                    'linestyle': ':' if stat.json_metadata['rounds'] == 1 else '-',
                                     'label': "_nolegend_" if stat.json_metadata['rounds'] == 1 else stat.json_metadata['code']},
             failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'] * k,
         )
@@ -539,7 +521,7 @@ if __name__ == "__main__":
         plt.savefig(f'plot_{IDENTIFIER}.pdf')
 
         with open(f"data_{IDENTIFIER}.csv", "w") as f:
-            print(sinter.CSV_HEADER)
+            print(sinter.CSV_HEADER, file=f)
             for s in results:
                 print(s.to_csv_line(), file=f)
 
