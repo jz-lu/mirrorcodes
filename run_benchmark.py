@@ -82,8 +82,8 @@ if __name__ == "__main__":
     CIRCUIT = args.circuit
     TYPE = args.type
     if args.circidx != 100:
-        assert 0 <= args.circidx <= 5, f"Invalid circuit index {args.circidx}"
-        circ_choices = ['bare', 'loop', 'css', 'ft', 'superdense', 'phenom']
+        assert 0 <= args.circidx <= 4, f"Invalid circuit index {args.circidx}"
+        circ_choices = ['bare', 'loop', 'css', 'ft', 'superdense']
         CIRCUIT = circ_choices[args.circidx]
 
     """
