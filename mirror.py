@@ -192,7 +192,7 @@ class PushCircuit:
     """
     A class which holds a stim circuit and has some custom functions to modify the circuit in place.
     """
-    def __init__(self, noise, base_n, qps):
+    def __init__(self, noise, base_n, qps, n_override_bonus=None):
         """
         Initialize the circuit.
 
@@ -204,6 +204,8 @@ class PushCircuit:
         """
         self.circuit = stim.Circuit()
         self.n = base_n * (qps + 1)
+        if n_override_bonus is not None:
+            self.n += n_override_bonus
         self.base_n = base_n
         self.qps = qps
         self.idling = [True] * self.n
@@ -817,7 +819,7 @@ class MirrorCode():
         n = self.get_n()
         stabilizers_stim = stimify_symplectic(stabilizers)
 
-        sec = PushCircuit(noise, n, QUBITS_PER_STAB)
+        sec = PushCircuit(noise, n, QUBITS_PER_STAB, n_override_bonus=(n % 2))
 
         circuit_solution = cached_schedule(self)[4]
         max_tick = 0
