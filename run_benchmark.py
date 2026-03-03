@@ -70,10 +70,21 @@ if __name__ == "__main__":
         choices=['bare', 'loop', 'css', 'ft', 'superdense', 'phenom']
     )
 
+    parser.add_argument(
+        "--circidx",
+        type=int,
+        default=100,
+        help="For cluster purposes, can specify index into circuits instead of name",
+    )
+
     args = parser.parse_args()
     idx = args.idx
     CIRCUIT = args.circuit
     TYPE = args.type
+    if args.circidx != 100:
+        assert 0 <= args.circidx <= 5, f"Invalid circuit index {args.circidx}"
+        circ_choices = ['bare', 'loop', 'css', 'ft', 'superdense', 'phenom']
+        CIRCUIT = circ_choices[args.circidx]
 
     """
     Here are the codes that we will analyze.
