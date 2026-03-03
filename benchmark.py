@@ -315,7 +315,7 @@ class StabilizerCode():
         print("Collecting...")
         
         results = sinter.collect(
-            num_workers=12,
+            num_workers=16,
             tasks=tasks,
             max_shots=num_shots,
             decoders=decoders,
@@ -337,7 +337,8 @@ class StabilizerCode():
                 stats=results,
                 x_func=lambda stat: stat.json_metadata['p'],
                 group_func=lambda stat: stat.json_metadata['rounds'],
-                failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'] * num_logicals,
+                failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'],
+                failure_values_func=lambda _: 2*self.num_logicals
             )
             # physical_error_rates = 1 - (1 - ps)**self.num_logicals
             ax.loglog(ps, ps, color='gray', linestyle='--')

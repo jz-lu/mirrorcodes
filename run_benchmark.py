@@ -70,10 +70,21 @@ if __name__ == "__main__":
         choices=['bare', 'loop', 'css', 'ft', 'superdense', 'phenom']
     )
 
+    parser.add_argument(
+        "--circidx",
+        type=int,
+        default=100,
+        help="For cluster purposes, can specify index into circuits instead of name",
+    )
+
     args = parser.parse_args()
     idx = args.idx
     CIRCUIT = args.circuit
     TYPE = args.type
+    if args.circidx != 100:
+        assert 0 <= args.circidx <= 4, f"Invalid circuit index {args.circidx}"
+        circ_choices = ['bare', 'loop', 'css', 'ft', 'superdense']
+        CIRCUIT = circ_choices[args.circidx]
 
     """
     Here are the codes that we will analyze.
@@ -206,16 +217,16 @@ if __name__ == "__main__":
             # '90_8_10',
             '144_12_12']
 
-    T_LOW = 2.5 # min error rate is 10^-T_LOW
+    T_LOW = 3 # min error rate is 10^-T_LOW
     T_HIGH = 1.5 # max error rate is 10^-T_HIGH
-    NUM_PROBS = 1
-    NUM_SHOTS = 10_000
+    NUM_PROBS = 5
+    NUM_SHOTS = 15_000
 
     if CIRCUIT == "phenom":
         T_LOW = 2
         T_HIGH = 0.8
-        NUM_PROBS = 20
-        NUM_SHOTS = 10_000
+        NUM_PROBS = 8
+        NUM_SHOTS = 20_000
     
     PS = np.logspace(-T_LOW, -T_HIGH, NUM_PROBS)
 
@@ -246,7 +257,7 @@ if __name__ == "__main__":
         IDENTIFIER = f"{TYPE}_{idx}_{'phenom' if CIRCUIT == 'phenom' else CIRCUIT}_{NAMES[idx]}_{NUM_SHOTS}s"
 
         # Define the main parameters of the benchmarking
-        ROUND_CHOICES = list(set([1, 2, d-3, d]))
+        ROUND_CHOICES = list(set([d-3, d, d+3]))
 
         print("Making syndrome extraction circuits...")
         circ_func = None
@@ -322,8 +333,7 @@ if __name__ == "__main__":
         IDENTIFIER = f"{TYPE}_{idx}_{NAMES[idx]}_{NUM_SHOTS}s"
 
         # Define the main parameters of the benchmarking
-        ROUND_CHOICES = list(set([1, d]))
-        
+        ROUND_CHOICES = list(set([d]))
         CIRCUIT_NAMES = ['bare', 'loop', 'superdense', 'css', 'ft']
         FANCY_CIRCUIT_NAMES = ['Bare', 'Loop', 'SD', 'CSS-FT', 'FT']
 
@@ -367,7 +377,7 @@ if __name__ == "__main__":
             
         print("Collecting...")
         results = sinter.collect(
-            num_workers=12,
+            num_workers=16,
             tasks=tasks,
             max_shots=NUM_SHOTS,
             decoders=['tesseract'],
@@ -391,9 +401,10 @@ if __name__ == "__main__":
             stats=results,
             x_func=lambda stat: stat.json_metadata['p'],
             group_func=lambda stat: {'color': colors[stat.json_metadata['circidx']], 
-                                     'linestyle': '--' if stat.json_metadata['rounds'] == 1 else '-',
+                                     'linestyle': ':' if stat.json_metadata['rounds'] == 1 else '-',
                                      'label': "_nolegend_" if stat.json_metadata['rounds'] == 1 else stat.json_metadata['circuit']},
-            failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'] * k,
+            failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'],
+            failure_values_func=lambda _: 2*k
         )
         ax.loglog(PS, PS, color='gray', linestyle='--')
         # ax.set_ylim(5e-3, 5e-2)
@@ -429,7 +440,7 @@ if __name__ == "__main__":
             NOISE_MODEL_NAME = 'phenom' if CIRCUIT == 'phenom' else 'SI1000'
             n, k, d = [int(x) for x in CODE_NAME.split('_')]
             CODE_NAME = f'[[{n}, {k}, {d}]]'
-            ROUND_CHOICES = list(set([1, d]))
+            ROUND_CHOICES = list(set([d]))
 
             stabilizers = code.get_stim_tableau()
             benchmarker = StabilizerCode(stabilizers, verbose=False, name=CODE_NAME)
@@ -475,7 +486,7 @@ if __name__ == "__main__":
             
         print("Collecting...")
         results = sinter.collect(
-            num_workers=12,
+            num_workers=16,
             tasks=tasks,
             max_shots=NUM_SHOTS,
             decoders=['tesseract'],
@@ -501,7 +512,8 @@ if __name__ == "__main__":
             group_func=lambda stat: {'color': colors[stat.json_metadata['codeidx']], 
                                     'linestyle': ':' if stat.json_metadata['rounds'] == 1 else '-',
                                     'label': "_nolegend_" if stat.json_metadata['rounds'] == 1 else stat.json_metadata['code']},
-            failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'] * k,
+            failure_units_per_shot_func=lambda stat: stat.json_metadata['rounds'],
+            failure_values_func=lambda _: 2*k
         )
         ax.loglog(PS, PS, color='gray', linestyle='--')
         # ax.set_ylim(5e-3, 5e-2)
@@ -513,9 +525,6 @@ if __name__ == "__main__":
         ax.grid(which='major')
         ax.grid(which='minor')
         ax.legend()
-        # formatter = ticker.LogFormatterExponent(labelOnlyBase=False)
-        # ax.xaxis.set_major_formatter(formatter)
-        # ax.xaxis.set_minor_formatter(formatter)
 
         plt.tight_layout()
         plt.savefig(f'plot_{IDENTIFIER}.pdf')
