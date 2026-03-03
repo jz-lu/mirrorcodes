@@ -315,7 +315,7 @@ class StabilizerCode():
         print("Collecting...")
         
         results = sinter.collect(
-            num_workers=12,
+            num_workers=16,
             tasks=tasks,
             max_shots=num_shots,
             decoders=decoders,
