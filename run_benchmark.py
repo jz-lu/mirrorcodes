@@ -366,7 +366,7 @@ if __name__ == "__main__":
             
         print("Collecting...")
         results = sinter.collect(
-            num_workers=12,
+            num_workers=16,
             tasks=tasks,
             max_shots=NUM_SHOTS,
             decoders=['tesseract'],
@@ -475,7 +475,7 @@ if __name__ == "__main__":
             
         print("Collecting...")
         results = sinter.collect(
-            num_workers=12,
+            num_workers=16,
             tasks=tasks,
             max_shots=NUM_SHOTS,
             decoders=['tesseract'],
