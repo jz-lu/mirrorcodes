@@ -1346,16 +1346,16 @@ def find_non_abelian_codes_in_group(n, wz, wx, g, min_k=2):
                 if wx3:
                     b0, b1, b2 = bset
                     for phi, c, vinv in asym_stabs:
-                        t0 = mul[mul[c][phi[b0]]][vinv]
-                        t1 = mul[mul[c][phi[b1]]][vinv]
-                        t2 = mul[mul[c][phi[b2]]][vinv]
+                        t0 = mul[vinv][mul[phi[b0]][c]]
+                        t1 = mul[vinv][mul[phi[b1]][c]]
+                        t2 = mul[vinv][mul[phi[b2]][c]]
                         candb = _sort3(t0, t1, t2)
                         if candb < bset:
                             basm = False
                             break
                 else:
                     for phi, c, vinv in asym_stabs:
-                        candb = tuple(sorted(mul[mul[c][phi[b]]][vinv] for b in bset))
+                        candb = tuple(sorted(mul[vinv][mul[phi[b]][c]] for b in bset))
                         if candb < bset:
                             basm = False
                             break
