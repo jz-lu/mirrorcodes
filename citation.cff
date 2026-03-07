@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+title: Mirror codes
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Andrey Boris
+    family-names: Khesin
+    email: andrey.khesin@cs.ox.ac.uk
+    affiliation: University of Oxford
+  - given-names: Jonathan Z.
+    family-names: Lu
+    email: lujz@mit.edu
+    affiliation: MIT
+    orcid: 'https://orcid.org/0000-0002-2806-8248'
+
+abstract: >-
+  Numerical analysis of mirror codes and fault-tolerant syndrome extraction circuits
+repository-code: 'https://github.com/jz-lu/mirrorcodes'
