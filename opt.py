@@ -21,27 +21,34 @@ for i in permutations(range(8)):
             count += 2
         else:
             count += 1
-    if count >= 13:
+    if count >= 14:
         continue
-    mustz = [[
-        where[4] < where[1] < where[0],
-        where[0] < where[1] < where[4] or where[7] < where[4] < where[1],
-        where[1] < where[4] < where[7]], [
-        where[5] < where[2] < where[0],
-        where[0] < where[2] < where[5] or where[7] < where[5] < where[2],
-        where[2] < where[5] < where[7]], [
-        where[6] < where[3] < where[0],
-        where[0] < where[3] < where[6] or where[7] < where[6] < where[3],
-        where[3] < where[6] < where[7]]]
-    non_FT = False
-    for j in product(range(3), repeat = 3):
-        if sum(j) != 3:
-            continue
-        if sum([1 if mustz[k][j[k]] else 0 for k in range(3)]) >= 2:
-            non_FT = True
-            break
-    if non_FT:
+    non_FT = [False] * 2
+    for l in range(2):
+        mustz = [[
+            where[4] < where[1] < where[0],
+            where[0] < where[1] < where[4] or where[7] < where[4] < where[1],
+            where[1] < where[4] < where[7]], [
+            where[5] < where[2] < where[0],
+            where[0] < where[2] < where[5] or where[7] < where[5] < where[2],
+            where[2] < where[5] < where[7]], [
+            where[6] < where[3] < where[0],
+            where[0] < where[3] < where[6] or where[7] < where[6] < where[3],
+            where[3] < where[6] < where[7]]]
+        if 0 < i[0] < 7:
+            if l == 0:
+                mustz[(i[0] - 1) % 3][1] = True
+            else:
+                mustz[(i[0] - 1) % 3][2 * (i[0] // 4)] = True
+        for j in product(range(3), repeat = 3):
+            if sum(j) != 3:
+                continue
+            if sum([1 if mustz[k][j[k]] else 0 for k in range(3)]) >= 2:
+                non_FT[l] = True
+                break
+    if non_FT[0] and non_FT[1]:
         continue
     print(i)
+    print(sum([max(0, [3, 2, 2, 2, 2, 2, 2, 3][j] - j - 1) for j in before]))
     total += 1
 print(total)
