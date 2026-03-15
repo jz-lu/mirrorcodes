@@ -215,10 +215,10 @@ if __name__ == "__main__":
             # '90_8_10',
             '144_12_12']
 
-    T_LOW = 2.8 # min error rate is 10^-T_LOW
+    T_LOW = 3.096 # min error rate is 10^-T_LOW
     T_HIGH = 1.69 # max error rate is 10^-T_HIGH
     NUM_PROBS = 5
-    NUM_SHOTS = 15_000
+    NUM_SHOTS = 10_000
 
     if CIRCUIT == "phenom":
         T_LOW = 2
@@ -316,6 +316,8 @@ if __name__ == "__main__":
         print("=== TYPE: circuits ===")
         code_param = CODES[idx]
         code = MirrorCode(*code_param)
+        print(f"Mirror code group = {code.group}")
+        exit()
         CODE_NAME = NAMES[idx]
         NOISE_MODEL_NAME = 'phenom' if CIRCUIT == 'phenom' else 'SI1000'
         n, k, d = [int(x) for x in CODE_NAME.split('_')]
@@ -333,7 +335,7 @@ if __name__ == "__main__":
         # Define the main parameters of the benchmarking
         ROUND_CHOICES = list(set([d]))
         CIRCUIT_NAMES = ['bare', 'loop', 'superdense', 'css', 'ft']
-        FANCY_CIRCUIT_NAMES = ['Bare', 'Loop', 'SD', 'CSS-FT', 'FT']
+        FANCY_CIRCUIT_NAMES = ['Bare', 'Loop', 'SD', r'CSS-FT$_6$', r'FT$_6$']
 
         tasks = []
         for circ_idx, circ_name in enumerate(CIRCUIT_NAMES):
@@ -378,6 +380,7 @@ if __name__ == "__main__":
             num_workers=16,
             tasks=tasks,
             max_shots=NUM_SHOTS,
+            max_errors=1000,
             decoders=['tesseract'],
             custom_decoders=decoder_dict,
             print_progress=True,
@@ -486,6 +489,7 @@ if __name__ == "__main__":
         results = sinter.collect(
             num_workers=16,
             tasks=tasks,
+            max_errors=1000,
             max_shots=NUM_SHOTS,
             decoders=['tesseract'],
             custom_decoders=decoder_dict,
