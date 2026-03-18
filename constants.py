@@ -16,7 +16,7 @@ def get_filename(stage, n, r = None, abelian = True):
         return f'{abelianPFX}{STAGEPFX}{stage}_{generate_identifier(n)}_part{r}.pkl'
     return f'{abelianPFX}{STAGEPFX}{stage}_{generate_identifier(n)}.pkl'
 
-RATE_THRESHOLD = 1/30
+RATE_THRESHOLD = 1/31
 DISTANCE_THRESHOLD = 4
 
 DISTANCE_RATE_THRESHOLD = 0.3 # const c such that we want R*d > c*n

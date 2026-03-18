@@ -9,7 +9,7 @@ np.random.shuffle(l1)
 for pair in l1:
     z, x = pair
     l2 = list(range(301))
-    l2 = [240, 288]
+    l2 = [240]
     np.random.shuffle(l2)
     for i in l2:
         cur = 0
@@ -20,7 +20,7 @@ for pair in l1:
             save = False
             for code in data:
                 n, k, d = np.prod(code[0]), code[4], code[5]
-                if (d >= 18 or d == -1 or (n == 120 and d >= 10)) and not ((n == 240 and d >= 20) or (n == 288 and d >= 18)):
+                if d == -1:
                     print(code)
                     result = stage3(n, [code[:5]], 36000, True, True)
                     if len(result) == 0:
@@ -46,7 +46,7 @@ for pair in l1:
             save = False
             for code in data:
                 n, k, d = np.prod(code[0]), code[4], code[5]
-                if (d >= 18 or d == -1 or (n == 120 and d >= 10)) and not ((n == 240 and d >= 20) or (n == 288 and d >= 18)):
+                if d == -1:
                     print(code)
                     result = stage3(n, codes = [code[:5]], t = 36000, verbose = True, estimate = True)
                     if len(result) == 0:

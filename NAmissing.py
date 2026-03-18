@@ -9,10 +9,10 @@ pair_list = [(3, 3)]
 for pair in pair_list:
     z, x = pair
     print(f'Z = {z}, X = {x}')
-    results = [[]]
+    results = [[], [], [], [], []]
     for s in range(1, 4):
         missing = []
-        for i in range(101):
+        for i in range(151):
             if Path(f"NAdata{z}{x}/NA_STAGE{s}_n{i}_part0.pkl").is_file():
                 result = []
                 cur = 0
@@ -24,8 +24,10 @@ for pair in pair_list:
                     with open(f"NAdata{z}{x}/NA_STAGE{s}_n{i}.pkl", "wb") as f:
                         pickle.dump(result, f)
                     continue
-                elif Path(f"NAdata{z}{x}/NA_STAGE{s}_n{i}.pkl").is_file():
-                    os.remove(f"NAdata{z}{x}/NA_STAGE{s}_n{i}.pkl")
+                else:
+                    print(f"Missing n = {i}, Stage {s}, Part {cur}")
+                    if Path(f"NAdata{z}{x}/NA_STAGE{s}_n{i}.pkl").is_file():
+                        os.remove(f"NAdata{z}{x}/NA_STAGE{s}_n{i}.pkl")
             if Path(f"NAdata{z}{x}/NA_STAGE{s}_n{i}.pkl").is_file():
                 if s != 3:
                     continue
@@ -39,26 +41,28 @@ for pair in pair_list:
                     l = pickle.load(f)
                 if timeouts > 0:
                     missing += [f"{i} ({timeouts} timeouts of {len(l)} codes)"]
+                    results[s] += [i]
                 continue
             if s == 3 and Path(f"NAdata{z}{x}/NA_STAGE2_n{i}.pkl").is_file():
                 with open(f"NAdata{z}{x}/NA_STAGE2_n{i}.pkl", "rb") as f:
                     missing += [f"{i} ({len(pickle.load(f))} codes)"]
-            else:
-                add = True
-                for t in range(1, s):
-                    if i in results[t]:
-                        add = False
-                if add:
-                    missing += [i]
+                    results[s] += [i]
+                continue
+            add = True
+            for t in range(1, s):
+                if i in results[t]:
+                    add = False
+            if add:
+                missing += [i]
+                results[s] += [i]
         if s == 1:
             new_missing = []
             for i in missing:
-                if i == 128 or i == 256:
+                if i in [128, 192, 256]:
                     count = 'oo'
                 else:
                     count = str(len(nonabelian_groups_of_order(i)))
                 new_missing += [f"{i} (" + count + " non-abelian groups)"]
             missing = new_missing
-        results += [missing]
         print(f"Missing {missing} for stage {s}")
     print()

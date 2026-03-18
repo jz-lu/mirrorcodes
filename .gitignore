@@ -10,3 +10,4 @@ core.*
 *.pkl
 /.vscode/
 /.ipynb_checkpoints/
+faked.txt

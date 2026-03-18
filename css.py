@@ -40,8 +40,6 @@ def is_equivalently_css(symp: List[List[int]]) -> bool:
         If you also allow changing the generating set by multiplying stabilizers
         (row operations over F2), that's a different decision problem.
     """
-    if not symp:
-        return True
     m = len(symp)
     two_n = len(symp[0])
     if any(len(row) != two_n for row in symp):

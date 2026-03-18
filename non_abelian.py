@@ -20,7 +20,7 @@ class IndexedGroupOps:
     inv_table: List[int]                # inv_table[a] = a^{-1} (0-based)
     mul_table: List[List[int]]          # mul_table[a][b] = a*b (0-based)
     gap_bat: str
-    timeout: int = 120
+    timeout: int = 3600
 
     _center_cache: Optional[List[int]] = None
     _aut_cache: Optional[List[List[int]]] = None
@@ -129,7 +129,7 @@ class IndexedGroupOps:
         return auts
 
 @lru_cache
-def build_indexed_group_ops(group_dict, timeout: int = 120):
+def build_indexed_group_ops(group_dict, timeout: int = 3600):
     """
     Build inv/mul tables using GAP, with indices 0..n-1 and identity at 0.
     """
@@ -227,7 +227,7 @@ def win_to_cygdrive(path: str) -> str:
     rest = p[2:].replace("\\", "/")
     return f"/cygdrive/{drive}{rest}"
 
-def _run_gap_windows(code: str, *, gap_bat: str, timeout=120):
+def _run_gap_windows(code: str, *, gap_bat: str, timeout=3600):
     # Your existing Windows GAP bundle uses Cygwin runtime\bin\bash.exe
     gap_root = os.path.dirname(os.path.abspath(gap_bat))
     runtime_bin = os.path.join(gap_root, "runtime", "bin")
@@ -264,7 +264,7 @@ def _run_gap_windows(code: str, *, gap_bat: str, timeout=120):
         raise RuntimeError(f"GAP failed (exit {p.returncode}). STDERR:\n{err}\nSTDOUT:\n{out}")
     return out, err
 
-def _run_gap_linux(code: str, *, timeout=120):
+def _run_gap_linux(code: str, *, timeout=3600):
     # Prefer GAP_EXE if provided, else find gap on PATH
     gap_exe = os.environ.get("GAP_EXE") or shutil.which("gap")
     if not gap_exe:
@@ -293,13 +293,15 @@ def _run_gap_linux(code: str, *, timeout=120):
         raise RuntimeError(f"GAP failed (exit {p.returncode}). STDERR:\n{err}\nSTDOUT:\n{out}")
     return out, err
 
-def _run_gap(code: str, *, gap_bat: str, timeout=120):
+def _run_gap(code: str, *, gap_bat: str, timeout=3600):
     if _is_windows_gap(gap_bat):
         return _run_gap_windows(code, gap_bat=gap_bat, timeout=timeout)
     else:
         return _run_gap_linux(code, timeout=timeout)
 
-def nonabelian_groups_of_order(n: int, timeout=120):
+def nonabelian_groups_of_order(n: int, timeout=3600):
+    if n in [0, 128, 192]:
+        return []
     gap_bat = util.gap_bat()
     if not isinstance(n, int) or n <= 0:
         raise ValueError("n must be a positive integer")

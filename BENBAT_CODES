@@ -1,8 +1,8 @@
 #!/bin/bash
-#SBATCH -n 1  # number of cores
+#SBATCH -n 16  # number of cores
 #SBATCH -t 0-12:00  # Runtime DAYS-HRS:MIN
 #SBATCH -p mit_normal  # Node partition, don't change this
-#SBATCH --mem-per-cpu=4GB  # Request memory per CPU
+#SBATCH --mem-per-cpu=4000  # Request memory per CPU
 #SBATCH -o out/out_%A_%a.txt  # Redirect output to output_JOBID.txt
 #SBATCH -e err/err_%A_%a.txt  # Redirect errors to error_JOBID.txt
 #SBATCH --mail-type=END  # Mail when job ends
@@ -10,4 +10,4 @@
 
 eval "$("$HOME/.local/bin/micromamba" shell hook -s bash)"
 micromamba activate gap
-python filter.py -i NAdata33 -z 3 -x 3 -k 2 -g -t 3600 -s 3 -n 96 -w 400 -r $SLURM_ARRAY_TASK_ID
+singularity exec --compat --bind $PWD:/mnt --pwd /mnt ../container/QEC.sif python run_benchmark.py --type codes --circidx $SLURM_ARRAY_TASK_ID
