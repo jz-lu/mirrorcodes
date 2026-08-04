@@ -215,10 +215,12 @@ if __name__ == "__main__":
             # '90_8_10',
             '144_12_12']
 
-    T_LOW = 3.096 # min error rate is 10^-T_LOW
+    T_LOW = 3.3 # min error rate is 10^-T_LOW
     T_HIGH = 1.69 # max error rate is 10^-T_HIGH
-    NUM_PROBS = 5
-    NUM_SHOTS = 10_000
+    NUM_PROBS = 7
+    NUM_SHOTS = 2_000_001 
+    STOP_AFTER = 100 # stop after this many errors have been found
+    NUM_WORKERS = 15 # number of threads to spawn for decoding
 
     if CIRCUIT == "phenom":
         T_LOW = 2
@@ -317,7 +319,6 @@ if __name__ == "__main__":
         code_param = CODES[idx]
         code = MirrorCode(*code_param)
         print(f"Mirror code group = {code.group}")
-        exit()
         CODE_NAME = NAMES[idx]
         NOISE_MODEL_NAME = 'phenom' if CIRCUIT == 'phenom' else 'SI1000'
         n, k, d = [int(x) for x in CODE_NAME.split('_')]
@@ -377,10 +378,10 @@ if __name__ == "__main__":
             
         print("Collecting...")
         results = sinter.collect(
-            num_workers=16,
+            num_workers=NUM_WORKERS,
             tasks=tasks,
             max_shots=NUM_SHOTS,
-            max_errors=1000,
+            max_errors=STOP_AFTER,
             decoders=['tesseract'],
             custom_decoders=decoder_dict,
             print_progress=True,
@@ -487,9 +488,9 @@ if __name__ == "__main__":
             
         print("Collecting...")
         results = sinter.collect(
-            num_workers=16,
+            num_workers=NUM_WORKERS,
             tasks=tasks,
-            max_errors=1000,
+            max_errors=STOP_AFTER,
             max_shots=NUM_SHOTS,
             decoders=['tesseract'],
             custom_decoders=decoder_dict,
